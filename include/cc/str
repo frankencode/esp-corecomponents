@@ -1,0 +1,318 @@
+#pragma once
+
+#include <cc/String>
+#include <type_traits>
+#include <cstdint>
+#include <cstddef>
+
+namespace cc {
+
+template<bool IsSigned>
+struct SignBit {
+    template<class T>
+    static constexpr int get(T x) { return x < 0; }
+};
+
+template<>
+struct SignBit<false> {
+    template<class T>
+    static constexpr int get(T x) { return 0; }
+};
+
+template<class T>
+inline int signBit(T x) { return SignBit<std::is_signed<T>::value>::get(x); }
+
+/** \name Number Formatting Functions
+  */
+///@{
+/// \ingroup strings
+
+/** Convert an integer value to string
+  * \tparam T Integer type
+  * \param x Integer value
+  * \param base Number base (2..62)
+  * \param n Maximum number of digits
+  * \return Text representation of x
+  */
+template<class T>
+inline String inum(T x, int base = 10, int n = -1)
+{
+    int sign = signBit(x);
+    if (sign) x = -x;
+    int m = (x == 0);
+    for (T y = x; y > 0; y /= base) ++m;
+    if (sign) ++m;
+    if (n > 0 && m < n) m = n;
+    String s = String::allocate(m, '0');
+    if (sign) s[0] = '-';
+    for (int i = s.count() - 1; x > 0 && s.has(i); x /= base, --i) {
+        const char *fig =
+            "0123456789"
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "abcdefghijklmnopqrstuvwxyz";
+        s[i] = fig[x % base];
+    }
+    return s;
+}
+
+/** Convert an integer to a decimal string
+  * \param x Integer value
+  * \param n Number of digits
+  * \return Text representation of x
+  */
+template<class T>
+inline String dec(T x, int n = -1) { return inum(x, 10, n); }
+
+/** Convert an integer to a hexadecimal string
+  * \param x Integer value
+  * \param n Number of digits
+  * \return Text representation of x
+  */
+template<class T>
+inline String hex(T x, int n = -1) { return inum(x, 16, n); }
+
+/** Convert \a data to hexadecimal
+  * \todo Introduce Byte->Array<uint8_t> and move this function to Bytes::hex()
+  */
+String hex(const Bytes &data, char a = 'A');
+
+/** Convert hexadecimal literal \a hex to a byte array
+  */
+Bytes readHex(const String &hex);
+
+/** Convert \a data to hexadecimal
+  */
+inline String hex(const String &data, char a = 'A') { return hex(data.asBytes(), a); }
+
+/** Convert an integer to an octal string
+  * \param x Integer value
+  * \param n Number of digits
+  * \return Text representation of x
+  */
+template<class T>
+inline String oct(T x, int n = -1) { return inum(x, 8, n); }
+
+/** Convert an integer to a binary string
+  * \param x Integer value
+  * \param n Number of digits
+  * \return Text representation of x
+  */
+template<class T>
+inline String bin(T x, int n = -1) { return inum(x, 2, n); }
+
+/** Convert a floating-point number to string
+  * \param x Floating-point value
+  * \param precision Number of significiant digits
+  * \param base Number base (2..62)
+  * \param screen Maximum absolute exponent for choosing a non-exponential notation
+  * \return Text representation of x
+  */
+String fnum(double x, int precision = 16, int base = 10, int screen = 6);
+
+/** Convert a floating point number to a fixed point notation string
+  * \param x Floating point value
+  * \param nf Number of fractional digits
+  * \return Text representation of x
+  */
+String fixed(double x, int nf);
+
+/** Convert a floating point number to a fixed point notation string
+  * \param x Floating point value
+  * \param ni Number of integral digits
+  * \param nf Number of fractional digits
+  * \return Text representation of x
+  */
+String fixed(double x, int ni, int nf);
+
+/** Convert a floating point number to a exponential notation string
+  * \param x Integer value
+  * \param precision Number of significiant digits
+  * \return Text representation of x
+  */
+inline String sci(float x, int precision = 8) { return fnum(x, precision, 10, 0); }
+
+/** \copydoc sci(float, int)
+  */
+inline String sci(double x, int precision = 17) { return fnum(x, precision, 10, 0); }
+
+/** Convert a floating point number to decimal string
+  * \param x Floating point number
+  * \param precision Number of significiant digits
+  * \return Text representation of x
+  */
+inline String dec(float x, int precision = 8) { return fnum(x, precision, 10, 6); }
+
+/** \copydoc dec(float, int)
+  */
+inline String dec(double x, int precision = 17) { return fnum(x, precision, 10, 6); }
+
+///@}
+
+/** \name Default Stringification Functions
+  */
+///@{
+/// \ingroup strings
+
+/** Convert \a x to string */
+inline String str(const String &x) { return x; }
+
+/** Convert \a x to string */
+inline String str(const char *x) { return x; }
+
+/** Convert \a x to string */
+inline String str(char *x) { return String{x}; }
+
+/** Convert \a x to string */
+inline String str(bool x) { return x ? "true" : "false"; }
+
+/** Convert \a x to string */
+String str(const void *x);
+
+/** Convert \a x to string */
+inline String str(char x) { const char* p = &x; return {p, 1}; }
+
+/** Convert an unicode character to a string */
+String str(char32_t ch);
+
+/** Convert \a x to string */
+inline String str(unsigned char x) { return dec(x); }
+
+/** Convert \a x to string */
+inline String str(unsigned short x) { return dec(x); }
+
+/** Convert \a x to string */
+inline String str(unsigned int x) { return dec(x); }
+
+/** Convert \a x to string */
+inline String str(unsigned long x) { return dec(x); }
+
+/** Convert \a x to string */
+inline String str(unsigned long long x) { return dec(x); }
+
+/** Convert \a x to string */
+inline String str(short x) { return dec(x); }
+
+/** Convert \a x to string */
+inline String str(int x) { return dec(x); }
+
+/** Convert \a x to string */
+inline String str(long x) { return dec(x); }
+
+/** Convert \a x to string */
+inline String str(long long x) { return dec(x); }
+
+/** Convert \a x to string */
+inline String str(float x) { return dec(x); }
+
+/** Convert \a x to string */
+inline String str(double x) { return dec(x); }
+
+/** Convert \a list to string
+  */
+template<class T>
+inline String str(const List<T> &list)
+{
+    if (list.count() == 0) return "[]";
+    List<String> f;
+    f << String{"[ "};
+    for (auto pos = list.head(); pos; ++pos) {
+        f << str(list.at(pos));
+        if (+pos != list.count() - 1)
+            f << String{", "};
+    }
+    f << String{" ]"};
+    return f;
+}
+
+template<class, class, class>
+class Map;
+
+/** Convert \a map to string
+  */
+template<class K, class T, class O>
+inline String str(const Map<K, T, O> &map)
+{
+    auto n = map.count();
+    if (n == 0) return "[]";
+    List<String> f;
+    f << String{"[ "};
+    for (const auto &x: map) {
+        f << String{"("} << str(x.key()) << String{": "} << str(x.value()) << String{")"};
+        if (--n > 0) f << String{", "};
+    }
+    f << String{" ]"};
+    return f;
+}
+
+template<class, class, class>
+class MultiMap;
+
+/** Convert \a map to string
+  */
+template<class K, class T, class O>
+inline String str(const MultiMap<K, T, O> &map)
+{
+    auto n = map.count();
+    if (n == 0) return "[]";
+    List<String> f;
+    f << String{"[ "};
+    for (const auto &x: map) {
+        f << String{"("} << str(x.key()) << String{": "} << str(x.value()) << String{")"};
+        if (--n > 0) f << String{", "};
+    }
+    f << String{" ]"};
+    return f;
+}
+
+template<class, class>
+class Set;
+
+/** Convert \a set to string
+  */
+template<class T, class O>
+inline String str(const Set<T, O> &set)
+{
+    auto n = set.count();
+    if (n == 0) return "[]";
+    List<String> f;
+    f << String{"[ "};
+    for (const auto &x: set) {
+        f << str(x);
+        if (--n > 0) f << String{", "};
+    }
+    f << String{" ]"};
+    return f;
+}
+
+template<class, class>
+class MultiSet;
+
+/** Convert \a set to string
+  */
+template<class T, class O>
+inline String str(const MultiSet<T, O> &set)
+{
+    auto n = set.count();
+    if (n == 0) return "[]";
+    List<String> f;
+    f << String{"[ "};
+    for (const auto &x: set) {
+        f << str(x);
+        if (--n > 0) f << String{", "};
+    }
+    f << String{" ]"};
+    return f;
+}
+
+template<class T, unsigned j, unsigned i>
+class Bit;
+
+template<class T, unsigned j, unsigned i = j>
+inline String str(const Bit<T, j, i> & bit)
+{
+    return str(static_cast<T>(bit));
+}
+
+///@}
+
+} // namespace cc

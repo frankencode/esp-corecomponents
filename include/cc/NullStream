@@ -1,0 +1,22 @@
+#pragma once
+
+#include <cc/Stream>
+
+namespace cc {
+
+/** \class NullStream cc/NullStream
+  * \ingroup streams
+  * \brief Read zeros and discard writes
+  */
+class NullStream: public Stream
+{
+public:
+    /** Create a new null stream
+      */
+    NullStream();
+
+private:
+    struct State;
+};
+
+} // namespace cc

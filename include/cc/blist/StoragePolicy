@@ -1,0 +1,17 @@
+#pragma once
+
+#include <cc/blist/config>
+
+namespace cc::blist {
+
+/** \internal
+  * \brief Storage policy bucket tree based container
+  * \tparam T Item type
+  */
+template<class T>
+struct StoragePolicy
+{
+    static constexpr unsigned Granularity = blist::Granularity;
+};
+
+} // namespace cc::blist

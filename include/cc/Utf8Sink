@@ -1,0 +1,65 @@
+#pragma once
+
+#include <cc/ByteSink>
+#include <cc/exceptions>
+
+namespace cc {
+
+/** \class Utf8Sink cc/Utf8Sink
+  * \ingroup unicode
+  * \brief UTF-8 encoding data sink
+  * \exception UnicodeError
+  */
+class Utf8Sink
+{
+public:
+    /** Create a new UTF-8 encoding data sink
+      * \param stream Underlying data stream
+      */
+    Utf8Sink(const Stream &stream):
+        byteSink_{stream}
+    {}
+
+    /** Create a new UTF-8 encoding data sink
+      * \param stream Underlying data stream
+      * \param buffer Output buffer
+      */
+    Utf8Sink(const Stream &stream, const Bytes &buffer):
+        byteSink_{stream, buffer}
+    {}
+
+    /** Create a new UTF-8 encoding data sink
+      * \param buffer Output buffer
+      */
+    Utf8Sink(const Bytes &buffer):
+        byteSink_{buffer}
+    {}
+
+    /** Write %Unicode character \a ch
+      */
+    void write(char32_t ch);
+
+    /** Get the total number of bytes written
+      */
+    long long currentOffset() const { return byteSink_.currentOffset(); }
+
+private:
+    class SurrogatePairEncodingError: public UnicodeError {
+    public:
+        String message() const override;
+    };
+
+    class NonCharacterEncodingError: public UnicodeError {
+    public:
+        String message() const override;
+    };
+
+    class LargeCodePointEncodingError: public UnicodeError {
+    public:
+        String message() const override;
+    };
+
+    ByteSink byteSink_;
+};
+
+} // namespace cc

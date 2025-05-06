@@ -1,0 +1,89 @@
+#pragma once
+
+#include <iterator>
+#include <compare>
+
+namespace cc {
+
+/** \brief Policy for selecting the item access type
+  */
+template<class Container>
+class ArrayIteratorItemAccess
+{
+public:
+    /** Item access type
+      */
+    using Type = typename Container::Item &;
+};
+
+template<class Container>
+class ArrayIteratorItemAccess<const Container>
+{
+public:
+    using Type = const typename Container::Item &;
+};
+
+/** \class ArrayIterator cc/ArrayIterator
+  * \brief %Array iterator
+  * \tparam Container Container type
+  * \tparam Dir Direction (1 for forward iterator, -1 for backward iterator)
+  */
+template<class Container, long Dir = 1>
+class ArrayIterator
+{
+public:
+    using iterator_category = std::bidirectional_iterator_tag;
+    using value_type = typename Container::Item;
+    using difference_type = long;
+    using pointer = typename Container::Item *;
+    using reference = typename Container::Item &;
+
+    /** Create an array iterator pointing to the \a i-th item of array \a c
+      */
+    ArrayIterator(Container &c, long i):
+        c_{c},
+        i_{i}
+    {}
+
+    /** Check if this iterator is valid (explicitly cast to bool)
+      */
+    explicit operator bool() const { return i_ < c_.count() && 0 <= i_; }
+
+    /** Get access to current item value
+      */
+    ArrayIteratorItemAccess<Container>::Type operator*() const { return c_.at(i_); }
+
+    /** Step to the next item and return the old iterator value (prefix increment operator)
+      */
+    ArrayIterator &operator++() { i_ += Dir; return *this; }
+
+    /** Step to the previous item and return the old iterator value (prefix decrement operator)
+      */
+    ArrayIterator &operator--() { i_ -= Dir; return *this; }
+
+    /** Get iterator value stepped \a delta items forward (addition operator)
+      */
+    ArrayIterator operator+(long delta) { return ArrayIterator{c_, i_ + Dir * delta}; }
+
+    /** Get iterator value stepped \a delta items backward (substraction operator)
+      */
+    ArrayIterator operator-(long delta) { return ArrayIterator{c_, i_ - Dir * delta}; }
+
+    /** Get distance between this and another iterator (substraction operator)
+      */
+    int operator-(const ArrayIterator &b) const { return i_ - b.i_; }
+
+    /** Equality operator
+      */
+    bool operator==(const ArrayIterator &b) const { return i_ == b.i_; }
+
+    /** Ordering operator
+      */
+    std::strong_ordering operator<=>(const ArrayIterator &b) const { return i_ <=> b.i_; }
+
+private:
+    Container &c_;
+    long i_;
+};
+
+} // namespace cc

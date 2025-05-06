@@ -1,0 +1,70 @@
+#pragma once
+
+#include <utility> // std::swap()
+#include <cassert>
+#include <cstdint>
+
+namespace cc {
+
+/** \class Random cc/Random
+  * \ingroup misc
+  * \brief Pseudo-random number generator
+  *
+  * The Random class provides a simple and fast pseudo-random number generator.
+  */
+class Random
+{
+public:
+    /** Create a new random number generator
+      * \param seed Seed number
+      */
+    explicit Random(uint32_t seed = 0):
+        x_{seed}
+    {}
+
+    /** Generate another random number
+      */
+    uint32_t get()
+    {
+        x_ = (1664525ul * x_) + 1013904223ul;
+        return x_;
+    }
+
+    /** Get another random number in range [a, b]
+      */
+    uint32_t get(uint32_t a, uint32_t b)
+    {
+        assert(a <= b);
+        return (static_cast<uint64_t>(get()) * (b - a) >> 32) + a;
+    }
+
+    /** \copydoc get()
+      */
+    uint32_t operator()()
+    {
+        return get();
+    }
+
+    /** \copydoc get(uint32_t, uint32_t)
+      */
+    uint32_t operator()(uint32_t a, uint32_t b)
+    {
+        return get(a, b);
+    }
+
+    /** Randomly shuffle items in \a container
+      */
+    template<class Container>
+    void shuffle(Container &container)
+    {
+        for (long i = 0, n = container.count(); i < n; ++i) {
+            long j = get(0, n - 1);
+            std::swap(container[i], container[j]);
+        }
+    }
+
+private:
+    uint32_t x_;
+};
+
+} // namespace cc

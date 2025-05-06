@@ -1,0 +1,574 @@
+#pragma once
+
+#include <cc/blist/Stop>
+#include <cc/blist/SlotMap>
+#include <cc/blist/config>
+#include <cc/container>
+#include <type_traits>
+#include <limits>
+#include <utility>
+#include <functional>
+#include <bit>
+#include <cassert>
+
+namespace cc::blist {
+
+/** \internal
+  * \brief B+-tree that uses sub-tree weights as search keys.
+  *
+  * The blist::Tree is a B+-tree which contains sub-tree weights as keys in the inner nodes.
+  * The levels of the tree are comprised of double linked bucket chains.
+  *
+  * Item storage and retrieval has to be defined in a derived class.
+  * This class provides only part of the tree logic which is independent of the item type.
+  *
+  * Keeping the logic in this class out of item type dependent template instantiations
+  * reduces shared object size by a significiant amount.
+  *
+  * \see blist::Vector
+  */
+template<unsigned G = Granularity>
+class Tree
+{
+public:
+    class Branch;
+
+    static constexpr unsigned StepBits = std::countr_zero(G);
+    static constexpr unsigned StepMask = G - 1;
+
+    class Node: public Stop
+    {
+    public:
+        Node *succ() const { return static_cast<Node *>(succ_); }
+        Node *pred() const { return static_cast<Node *>(pred_); }
+        union {
+            Branch *parent_ { nullptr };
+            Node *lastLeaf_;
+        };
+    };
+
+    class Branch final: public Node
+    {
+    public:
+        using Node::fill_;
+        using Node::succ_;
+        using Node::pred_;
+
+        Node *childAt(unsigned egress) const { return child_[map_.mapToSlot(egress)]; }
+        long weightAt(unsigned egress) const { return weight_[map_.mapToSlot(egress)]; }
+
+        Node *find(long &index) const
+        {
+            const unsigned n = fill_;
+
+            for (unsigned k = 0; k < n; ++k)
+            {
+                const unsigned slotIndex = map_.mapToSlot(k);
+                index -= weight_[slotIndex];
+                if (index < 0) {
+                    index += weight_[slotIndex];
+                    return child_[slotIndex];
+                }
+            }
+
+            return nullptr;
+        }
+
+        void push(unsigned egress, Node *child, long weight)
+        {
+            unsigned slotIndex = map_.pushEntry(egress, fill_);
+            ++fill_;
+            child_[slotIndex] = child;
+            weight_[slotIndex] = weight;
+            child->slotIndex_ = slotIndex;
+            child->parent_ = this;
+        }
+
+        unsigned drop(unsigned egress)
+        {
+            unsigned slotIndex = map_.popEntry(egress, fill_);
+            --fill_;
+            return slotIndex;
+        }
+
+        long &weightOf(const Node *child) { return weight_[child->slotIndex_]; }
+
+        unsigned indexOf(const Node *child) const { return map_.mapToBucket(child->slotIndex_); }
+
+        long dissipateForwardTo(Branch *succ)
+        {
+            CC_BLIST_ASSERT(fill_ > 0);
+            CC_BLIST_ASSERT(succ->fill_ < G);
+
+            unsigned slotIndex = drop(fill_ - 1);
+            succ->push(0, child_[slotIndex], weight_[slotIndex]);
+            return weight_[slotIndex];
+        }
+
+        long dissipateBackwardTo(Branch *pred)
+        {
+            CC_BLIST_ASSERT(fill_ > 0);
+            CC_BLIST_ASSERT(pred->fill_ < G);
+
+            unsigned slotIndex = drop(0);
+            pred->push(pred->fill_, child_[slotIndex], weight_[slotIndex]);
+            return weight_[slotIndex];
+        }
+
+        long distributeHalfForwardTo(Branch *succ)
+        {
+            CC_BLIST_ASSERT(fill_ == G);
+            CC_BLIST_ASSERT(succ->fill_ <= G / 2);
+
+            long delta = 0;
+
+            for (unsigned k = 0; k < G / 2; ++k)
+            {
+                unsigned slotIndex = drop(G / 2);
+                delta += weight_[slotIndex];
+                succ->push(k, child_[slotIndex], weight_[slotIndex]);
+            }
+
+            return delta;
+        }
+
+        long distributeQuarterForwardTo(Branch *succ)
+        {
+            CC_BLIST_ASSERT(fill_ == G);
+            CC_BLIST_ASSERT(succ->fill_ <= G - G / 4);
+
+            long delta = 0;
+
+            for (unsigned k = G - 1; k >= G - G / 4; --k)
+            {
+                unsigned slotIndex = drop(k);
+                delta += weight_[slotIndex];
+                succ->push(0, child_[slotIndex], weight_[slotIndex]);
+            }
+
+            return delta;
+        }
+
+        long distributeQuarterBackwardTo(Branch *pred)
+        {
+            CC_BLIST_ASSERT(fill_ == G);
+            CC_BLIST_ASSERT(pred->fill_ == G / 2);
+
+            long delta = 0;
+
+            for (unsigned k = G / 2; k < G / 2 + G / 4; ++k)
+            {
+                unsigned slotIndex = drop(0);
+                delta += weight_[slotIndex];
+                pred->push(k, child_[slotIndex], weight_[slotIndex]);
+            }
+
+            return delta;
+        }
+
+        void adoptChildrenOfSucc(const Branch *succ)
+        {
+            CC_BLIST_ASSERT(fill_ + succ->fill_ <= G);
+
+            for (unsigned k = 0; k < succ->fill_; ++k)
+            {
+                unsigned slotIndex = succ->map_.mapToSlot(k);
+                push(fill_, succ->child_[slotIndex], succ->weight_[slotIndex]);
+            }
+        }
+
+        Branch *succ() const { return static_cast<Branch *>(succ_); }
+        Branch *pred() const { return static_cast<Branch *>(pred_); }
+
+    private:
+        SlotMap<G> map_;
+        Node *child_[G];
+        long weight_[G];
+    };
+
+    long count() const { return weight_; }
+
+    long idealLeafCount() const
+    {
+        return (height_ > 0) ? root_->fill_ << ((height_ - 1) * StepBits) : 1;
+    }
+
+    Node *idealLeafAt(long idealIndex) const
+    {
+        Node *node = root_;
+        for (int h = height_; h > 0; --h) {
+            const int shift = (h - 1) * StepBits;
+            unsigned i = (idealIndex >> shift) & StepMask;
+            if (node->fill_ <= i) i = node->fill_ - 1;
+            node = static_cast<const Branch *>(node)->childAt(i);
+        }
+        return node;
+    }
+
+    Node *locateIdealLeaf(long idealIndex, long *offset) const
+    {
+        Node *node = root_;
+        long predWeight = 0;
+        for (int h = height_; h > 0; --h) {
+            const int shift = (h - 1) * StepBits;
+            unsigned i = (idealIndex >> shift) & StepMask;
+            if (node->fill_ <= i) i = node->fill_ - 1;
+            const Branch *branch = static_cast<const Branch *>(node);
+            for (unsigned k = 0; k < i; ++k) {
+                predWeight += branch->weightAt(k);
+            }
+            node = branch->childAt(i);
+        }
+        *offset = predWeight;
+        return node;
+    }
+
+    Node *getMinNode() const
+    {
+        Node *node = root_;
+        for (int h = height_; h > 0; --h) {
+            node = static_cast<const Branch *>(node)->childAt(0);
+        }
+        return node;
+    }
+
+    Node *getMaxNode() const
+    {
+        Node *node = root_;
+        for (int h = height_; h > 0; --h) {
+            node = static_cast<const Branch *>(node)->childAt(node->fill_ - 1);
+        }
+        return node;
+    }
+
+    Node *stepDownTo(long index, unsigned *egress) const;
+
+    bool check(const std::function<bool(const Node *)> &f) const
+    {
+        return check(f, root_, height_);
+    }
+
+    static bool check(const std::function<bool(const Node *)> &f, const Node *node, int h)
+    {
+        bool ok = true;
+        if (h > 0) {
+            const Branch *branch = static_cast<const Branch *>(node);
+            for (unsigned i = 0; i < branch->fill_; ++i) {
+                ok = ok && check(f, branch->childAt(i), h - 1);
+            }
+        }
+        if (h > -1) ok = ok && f(node);
+        return ok;
+    }
+
+    bool checkBalance() const
+    {
+        return check([](const Node *node){
+            if (node->pred_ && node->succ_) return node->fill_ >= 3 * G / 4;
+            if (node->pred_ || node->succ_) return node->fill_ >= G / 2;
+            return true;
+        });
+    }
+
+    bool isDense() const { return dense_; }
+
+    static constexpr long maxCapacity() { return static_cast<long>(1) << (sizeof(void *) == 8 ? 56 : 27); }
+
+protected:
+    template<class>
+    friend class SearchShim;
+
+    template<class NodeType>
+    void dissipate(NodeType *&node, unsigned &egress)
+    {
+        if (node->fill_ == G) dissipateSlow(node, egress);
+    }
+
+    template<class NodeType>
+    void dissipateSlow(NodeType *&node, unsigned &egress);
+
+    template<class NodeType>
+    void relieve(NodeType *node);
+
+    template<class NodeType>
+    void joinSucc(NodeType *node, NodeType *newNode)
+    {
+        joinSucc(node, newNode, std::is_same<NodeType, Branch>());
+    }
+
+    void joinSucc(Node *node, Node *newNode, bool isBranch);
+
+    template<class NodeType>
+    void collapseSucc(NodeType *node, NodeType *succ);
+
+    template<class NodeType>
+    void unlink(NodeType *node)
+    {
+        constexpr bool isBranch = std::is_same<NodeType, Branch>();
+
+        Branch *parent = node->parent_;
+        parent->drop(parent->indexOf(node));
+
+        Node *succ = node->succ();
+        Node *pred = node->pred();
+        if (pred) pred->succ_ = succ;
+        if (succ) succ->pred_ = pred;
+        else if (!isBranch) root_->lastLeaf_ = pred;
+
+        delete node;
+
+        relieve(parent);
+    }
+
+    static long &weight(Node *child) {
+        // CC_BLIST_ASSERT(child->parent_); // ineffective since root_->parent_ overlaps with root_->lastLeaf_
+        return child->parent_->weightOf(child);
+    }
+
+    void shiftWeights(Node *from, Node *to, long delta);
+    void updateWeights(Node *node, long delta);
+
+    void reduce();
+
+    const unsigned *revision() const
+    {
+        #ifdef CONFIG_CORECOMPONENTS_CONTAINER_ASSERTS
+        return &revision_;
+        #else
+        return nullptr;
+        #endif
+    }
+
+    long height_ : sizeof(void *) == 8 ? 7 : 4 { -1 };
+    long dense_  : 1 { -1 };
+    long weight_ : sizeof(void *) == 8 ? 56 : 27 { 0 };
+    Node *root_ { nullptr };
+    #ifdef CONFIG_CORECOMPONENTS_CONTAINER_ASSERTS
+    unsigned revision_ { 0 };
+    #endif
+};
+
+template<unsigned G>
+Tree<G>::Node *Tree<G>::stepDownTo(long index, unsigned *egress) const
+{
+    Node *node = root_;
+
+    if (index + 1 >= weight_) {
+        node = root_ ? root_->lastLeaf_ : nullptr;
+        *egress = (node) ? node->fill_ - (index < weight_) : 0;
+    }
+    else if (index <= 0) {
+        for (int h = height_; h > 0; --h) {
+            node = static_cast<const Branch *>(node)->childAt(0);
+        }
+        *egress = 0;
+    }
+    else if (dense_) {
+        for (int h = height_; h > 0; --h) {
+            node = static_cast<const Branch *>(node)->childAt((index >> (h * StepBits)) & StepMask);
+        }
+        *egress = index & StepMask;
+    }
+    else {
+        for (int h = height_; h > 0; --h) {
+            node = static_cast<const Branch *>(node)->find(index);
+        }
+        *egress = index;
+    }
+
+    return node;
+}
+
+template<unsigned G>
+void Tree<G>::joinSucc(Node *node, Node *newNode, bool isBranch)
+{
+    Node *oldSucc = node->succ();
+
+    if (oldSucc) {
+        newNode->succ_ = oldSucc;
+        oldSucc->pred_ = newNode;
+        dense_ = 0;
+    }
+    else if (!isBranch) {
+        root_->lastLeaf_ = newNode;
+    }
+
+    newNode->pred_ = node;
+    node->succ_ = newNode;
+
+    if (node != root_) {
+        Branch *parent = node->parent_;
+        unsigned newNodeIndex = parent->indexOf(node) + 1;
+        dissipate(parent, newNodeIndex);
+        parent->push(newNodeIndex, newNode, 0);
+    }
+    else {
+        Node *lastLeaf = root_->lastLeaf_;
+        Branch *branch = new Branch;
+        branch->push(0, root_, weight_);
+        branch->push(1, newNode, 0);
+        root_ = branch;
+        root_->lastLeaf_ = lastLeaf;
+        ++height_;
+    }
+}
+
+template<unsigned G>
+void Tree<G>::shiftWeights(Node *from, Node *to, long delta)
+{
+    while (from != to) {
+        weight(from) -= delta;
+        weight(to) += delta;
+        from = from->parent_;
+        to = to->parent_;
+    }
+}
+
+template<unsigned G>
+void Tree<G>::updateWeights(Node *node, long delta)
+{
+    for (int h = height_; h > 0; --h) {
+        weight(node) += delta;
+        node = node->parent_;
+    }
+    weight_ += delta;
+}
+
+template<unsigned G>
+void Tree<G>::reduce()
+{
+    if (root_) {
+        Node *lastLeaf = root_->lastLeaf_;
+        while (height_ > 0 && root_->fill_ == 1) {
+            Branch *branch = static_cast<Branch *>(root_);
+            root_ = branch->childAt(0);
+            delete branch;
+            --height_;
+        }
+        root_->lastLeaf_ = lastLeaf;
+    }
+}
+
+template<unsigned G>
+template<class NodeType>
+void Tree<G>::dissipateSlow(NodeType *&node, unsigned &egress)
+{
+    NodeType *succ = static_cast<NodeType *>(node->succ_);
+    NodeType *pred = static_cast<NodeType *>(node->pred_);
+
+    if (succ && pred) {
+        if (succ->fill_ < pred->fill_) {
+            if (egress != G) {
+                shiftWeights(node, succ, node->dissipateForwardTo(succ));
+            }
+            else {
+                node = succ;
+                egress = 0;
+            }
+            return;
+        }
+        if (pred->fill_ < succ->fill_) {
+            if (egress != 0) {
+                shiftWeights(node, pred, node->dissipateBackwardTo(pred));
+                --egress;
+            }
+            else {
+                node = pred;
+                egress = pred->fill_;
+            }
+            return;
+        }
+    }
+
+    if (pred) {
+        if (pred->fill_ < G) {
+            if (egress != 0) {
+                shiftWeights(node, pred, node->dissipateBackwardTo(pred));
+                --egress;
+            }
+            else {
+                node = pred;
+                egress = pred->fill_;
+            }
+            return;
+        }
+    }
+
+    if (succ) {
+        if (succ->fill_ < G) {
+            if (egress != G) {
+                shiftWeights(node, succ, node->dissipateForwardTo(succ));
+            }
+            else {
+                node = succ;
+                egress = 0;
+            }
+            return;
+        }
+    }
+
+    NodeType *newSucc = new NodeType;
+    joinSucc(node, newSucc);
+
+    #if 1
+    if (egress == G && !succ) {
+        node = newSucc;
+        egress = 0;
+        return;
+    }
+    #endif
+
+    shiftWeights(node, newSucc, node->distributeHalfForwardTo(newSucc));
+    dense_ = 0;
+
+    #ifdef CONFIG_CORECOMPONENTS_BLIST_SPILLBACK_ON_SPLIT
+    if (pred) {
+        shiftWeights(pred, node, pred->distributeQuarterForwardTo(node));
+    }
+
+    if (succ) {
+        shiftWeights(succ, newSucc, succ->distributeQuarterBackwardTo(newSucc));
+    }
+    #endif
+
+    if (egress > G / 2) {
+        node = newSucc;
+        egress -= G / 2;
+    }
+    #ifdef CONFIG_CORECOMPONENTS_BLIST_SPILLBACK_ON_SPLIT
+    else if (pred) {
+        egress += G / 4;
+    }
+
+    CC_BLIST_ASSERT(egress <= node->fill_);
+    #endif
+}
+
+template<unsigned G>
+template<class NodeType>
+void Tree<G>::relieve(NodeType *node)
+{
+    NodeType *succ = static_cast<NodeType *>(node->succ_);
+    if (node->fill_ < G / 2) {
+        if (succ) {
+            if (succ->fill_ > G / 2)
+                shiftWeights(succ, node, succ->dissipateBackwardTo(node));
+            else
+                collapseSucc(node, succ);
+        }
+        else if (node->fill_ == 0) {
+            unlink(node);
+        }
+    }
+}
+
+template<unsigned G>
+template<class NodeType>
+void Tree<G>::collapseSucc(NodeType *node, NodeType *succ)
+{
+    node->adoptChildrenOfSucc(succ);
+    shiftWeights(succ, node, weight(succ));
+    unlink(succ);
+}
+
+} // namespace cc::blist

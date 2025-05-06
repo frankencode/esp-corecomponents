@@ -1,0 +1,415 @@
+#pragma once
+
+#include <cc/List>
+
+namespace cc {
+
+/** \class Set cc/Set
+  * \ingroup container
+  * \brief %Set data container
+  * \tparam T Item type
+  * \tparam O Search order
+  */
+template<class T, class O = DefaultOrder>
+class Set {
+public:
+    using Item = T; ///< Item type
+    using Order = O; ///< Search order
+
+    /** \name Construction and Assignment
+      */
+    ///@{
+
+    /** Construct an empty set
+      */
+    Set() = default;
+
+    /** Construct a copy of \a other
+      */
+    Set(const Set &other) = default;
+
+    /** Construct with initial \a items
+      */
+    Set(std::initializer_list<Item> items)
+    {
+        for (const auto &x: items) insert(x);
+    }
+
+    /** Take over the right-side set \a other
+      */
+    Set(Set &&other):
+        me{std::move(other.me)}
+    {}
+
+    /** Assign set \a other
+      */
+    Set &operator=(const Set &other) = default;
+
+    /** Take over the right-side set \a other
+      */
+    Set &operator=(Set &&other)
+    {
+        me = std::move(other.me);
+        return *this;
+    }
+
+    /** Get corresponding list representation
+      */
+    List<Item> toList() const
+    {
+        return List<Item>{me};
+    }
+
+    ///@}
+
+    /** \name Item Access
+      */
+    ///@{
+
+    /** Get a locator pointing to the first item
+      */
+    Locator head() const { return me().head(); }
+
+    /** Get a locator pointing to the last item
+      */
+    Locator tail() const { return me().tail(); }
+
+    /** Get a locator pointing to the item at \a index
+      */
+    Locator from(long index) const { return me().from(index); }
+
+    /** Get the number of items stored in the set
+      */
+    long count() const { return me().count(); }
+
+    /** \copydoc count()
+      */
+    long size() const { return me().count(); }
+
+    /** Check if this set is non-empty
+      */
+    explicit operator bool() const { return count() > 0; }
+
+    /** \copydoc count()
+      */
+    long operator+() const { return me().count(); }
+
+    /** Check if \a index is valid
+      */
+    bool has(long index) const { return index < me().count() && 0 <= index; }
+
+    /** Get constant reference to the item at position \a pos
+      */
+    const Item &at(Locator pos) const
+    {
+        CC_CONTAINER_ASSERT(pos);
+        return me().at(pos);
+    }
+
+    /** Get constant references to the item at \a index
+      */
+    const Item &at(long index) const
+    {
+        CC_CONTAINER_ASSERT(0 <= index && index < count());
+        return me().at(index);
+    }
+
+    /** Get to the item at position \a pos
+      */
+    Item &at(Locator pos)
+    {
+        CC_CONTAINER_ASSERT(pos);
+        return me().at(pos);
+    }
+
+    /** Get references to the item at \a index
+      */
+    Item &at(long index)
+    {
+        CC_CONTAINER_ASSERT(0 <= index && index < count());
+        return me().at(index);
+    }
+
+    /** \copydoc at(long) const
+      */
+    const Item &operator[](long index) const { return at(index); }
+
+    /** Get constant reference to first item
+      */
+    const Item &first() const
+    {
+        CC_CONTAINER_ASSERT(count() > 0);
+        return me().first();
+    }
+
+    /** Get constant reference to last item
+      */
+    const Item &last() const
+    {
+        CC_CONTAINER_ASSERT(count() > 0);
+        return me().last();
+    }
+
+    /** Tell if \a item is the first item
+      */
+    bool firstIs(const Item &item) const
+    {
+        return &item == &first();
+    }
+
+    /** Tell if \a item is the last item
+      */
+    bool lastIs(const Item &item) const
+    {
+        return &item == &last();
+    }
+
+    /** Get constant reference to the first item
+      */
+    const Item &min() const
+    {
+        CC_CONTAINER_ASSERT(count() > 0);
+        return me().first();
+    }
+
+    /** Get constant reference to the last item
+      */
+    const Item &max() const
+    {
+        CC_CONTAINER_ASSERT(count() > 0);
+        return me().last();
+    }
+
+    ///@}
+
+    /** \name Set Operations
+      */
+    ///@{
+
+    /** Search for a matching key in the set
+      * \tparam Pattern %Pattern type (must be comparable with Key)
+      * \param pattern %Pattern to search for
+      * \param pos Returns the position of the item that was found
+      * \return True if \a a matching item was found
+      */
+    template<class Pattern = Item>
+    bool find(const Pattern &pattern, Out<Locator> pos = None{}) const
+    {
+        return me().template find<Order>(pattern, &pos);
+    }
+
+    /** Search for \a key and return \a item
+      * \tparam Pattern %Pattern type (must be comparable with Key)
+      * \param pattern %Pattern to search for
+      * \param item Returns the item found (if any)
+      * \return True if key was found
+      */
+    template<class Pattern = Item>
+    bool lookup(const Pattern &pattern, Out<Item> item) const
+    {
+        Locator pos;
+        bool found = find(pattern, &pos);
+        if (found) item = at(pos);
+        return found;
+    }
+
+    /** Convenience function to check if the set contains \a key
+      * \tparam Pattern %Pattern type (must be comparable with Key)
+      * \param pattern %Pattern to search for
+      * \return True if key was found
+      */
+    template<class Pattern = Item>
+    bool contains(const Pattern &pattern) const
+    {
+        return find(pattern);
+    }
+
+    /** Convenience function to find the start of a search range
+      * \tparam Pattern %Pattern type (must be comparable with Key)
+      * \param pattern %Pattern to search for
+      * \returns %Locator position
+      * \note \a pattern is included in the search range
+      * \see forEachInRange()
+      */
+    template<class Pattern>
+    Locator lowerBound(const Pattern &pattern) const
+    {
+        Locator pos;
+        find(pattern, &pos);
+        return pos;
+    }
+
+    /** Convenience function to find the end of a search range
+      * \tparam Pattern %Pattern type (must be comparable with Key)
+      * \param pattern %Pattern to search for
+      * \returns %Locator position
+      * \note \a pattern is included in the search range
+      * \see forEachInRange()
+      */
+    template<class Pattern>
+    Locator upperBound(const Pattern &pattern) const
+    {
+        Locator pos;
+        if (!find(pattern, &pos)) --pos;
+        return pos;
+    }
+
+    /** Insert a new item to the set
+      * \param item Item to add
+      * \param pos %Returns a locator pointing to the existing or newly inserted item
+      * \return True if \a item was not yet a member of the set
+      */
+    bool insert(const Item &item, Out<Locator> pos = None{})
+    {
+        return me().template insertUnique<Order>(item, &pos);
+    }
+
+    /** Insert an item to the set replacing any pre-existing same value item
+      * \param item Item to add
+      */
+    void establish(const Item &item)
+    {
+        return me().establish(item);
+    }
+
+    /** Remove an item from the set
+      * \tparam Key Search pattern type
+      * \param key Key to search for
+      * \return true If \a item was found and removed
+      */
+    template<class Key = Item>
+    bool remove(const Key &key)
+    {
+        return me().remove(key);
+    }
+
+    /** Insert \a item to the set
+      */
+    Set &operator<<(const Item& item)
+    {
+        insert(item);
+        return *this;
+    }
+
+    /** Get and remove the smallest item
+      */
+    Set &operator>>(Item& item)
+    {
+        if (count() > 0) {
+            Locator pos = head();
+            item = at(pos);
+            removeAt(pos);
+        }
+        return *this;
+    }
+
+    ///@}
+
+    /** \name Positional Operations
+      */
+    ///@{
+
+    /** Remove item at position \a pos (and advance \a pos to the next item)
+      */
+    void removeAt(Locator &pos)
+    {
+        me().popAndStep(pos);
+    }
+
+    /** Remove item at \a index
+      */
+    void removeAt(long index)
+    {
+        CC_CONTAINER_ASSERT(0 <= index && index < count());
+        me().pop(index);
+    }
+
+    ///@}
+
+    /** \name Global Operations
+      */
+    ///@{
+
+    /** Call function \a f for each item
+      * \tparam F Function type (lambda or functor)
+      * \param f Unary function which gets called for each item
+      */
+    template<class F>
+    void forEach(F f) const
+    {
+        for (auto &x: *this) f(x);
+    }
+
+    /** Call function \a f for each item in range [lower, upper]
+      * \tparam F Function type (lambda or functor)
+      * \param lower Lower boundary
+      * \param upper Upper boundary
+      * \param f Unary function which gets called for each item
+      * \note \a lower and \a upper are included in the iteration range.
+      */
+    template<class F>
+    void forEachInRange(const Item &lower, const Item &upper, F f) const
+    {
+        Locator pos;
+        find(lower, &pos);
+        for (; pos; ++pos) {
+            auto &item = at(pos);
+            if (upper < item) break;
+            f(item);
+        }
+    }
+
+    /** Remove all items
+      */
+    void deplete()
+    {
+        me().deplete();
+    }
+
+    ///@}
+
+    /** \name Standard Iterators
+      */
+    ///@{
+
+    using value_type = Item; ///< Item value type
+    using size_type = long; ///< Type of the container capacity
+
+    using const_iterator = Iterator<const blist::Vector<Item>>; ///< Readonly value iterator
+
+    const_iterator begin () const { return head(); } ///< %Return readonly iterator pointing to the first item (if any)
+    const_iterator cbegin() const { return head(); } ///< %Return readonly iterator pointing to the first item (if any)
+    const_iterator end   () const { return Locator{count()}; } ///< %Return readonly iterator pointing behind the last item
+    const_iterator cend  () const { return Locator{count()}; } ///< %Return readonly iterator pointing behind the last item
+
+    using const_reverse_iterator = ReverseIterator<const blist::Vector<Item>>; ///< Readonly reverse value iterator
+
+    const_reverse_iterator rbegin () const { return tail(); } ///< %Return readonly reverse iterator pointing to the last item (if any)
+    const_reverse_iterator crbegin() const { return tail(); } ///< %Return readonly reverse iterator pointing to the last item (if any)
+    const_reverse_iterator rend   () const { return Locator{-1}; } ///< %Return reverse iterator pointing before the first item
+    const_reverse_iterator crend  () const { return Locator{-1}; } ///< %Return reverse iterator pointing before the first item
+
+    ///@}
+
+    /** \name Comparism Operators
+      */
+    ///@{
+
+    /** Equality operator
+      */
+    template<class Other>
+    bool operator==(const Other &other) const { return container::equal(*this, other); }
+
+    ///@}
+
+    /** \internal
+      */
+    bool isDense() const { return me().isDense(); }
+
+private:
+    friend class List<Item>;
+
+    Cow<blist::Vector<Item>> me;
+};
+
+} // namespace cc

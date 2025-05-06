@@ -1,0 +1,107 @@
+#pragma once
+
+#include <cc/Stream>
+#include <cc/Queue>
+#include <cc/str>
+
+namespace cc {
+
+/** \todo make FormatSignal an enum class and let `nl` and `flush` be constexpr
+  */
+class FormatSignal {};
+class NewLine final: public FormatSignal {};
+class Flush final: public FormatSignal {};
+
+extern NewLine nl; ///< Newline formatting signal: causes a newline character to be added
+extern Flush flush; ///< Flush formatting signal: causes the formatting list to be flushed
+
+template<class T, bool isObject = std::is_base_of<Object, T>::value >
+class Stringify {
+public:
+    static String stringify(const T &x) { return str(x); }
+};
+
+template<class T>
+class Stringify<T, true> {
+public:
+    static String stringify(const T &x) { return x.toString(); }
+};
+
+/** \class Format cc/Format
+  * \ingroup streams
+  * \brief Generate formatted text
+  * \see IoStream::stdOut(), IoStream::stdErr()
+  */
+class Format final: public List<Bytes>
+{
+public:
+    /** Create a new formatted output text
+      * \param pattern Output format with zero or more placeholders ("%%")
+      * \param stream Output stream to write the resulting text to (optional)
+      */
+    Format(const String &pattern, const Stream &stream = Stream{});
+
+    /** Create a new formatted output text
+      * \param stream Output stream to write the resulting text to (optional)
+      */
+    Format(const Stream &stream = Stream{});
+
+    /** Cleanup: flush the output text
+      */
+    ~Format();
+
+    /** Add string \a s to the output text
+      */
+    Format &operator<<(const String &s) { return *this << s.asBytes(); }
+
+    /** Add string \a s to the output text
+      */
+    Format &operator<<(const Bytes &s);
+
+    /** Merge and add string list \a l to the output text
+      */
+    Format &operator<<(const List<String> &l) {
+        return (*this) << String{l};
+    }
+
+    /** \copydoc arg()
+      */
+    template<class T>
+    Format &operator<<(const T &x) {
+        if (me().discardMode) return *this;
+        return (*this) << Stringify<T>::stringify(x);
+    }
+
+    /** Append newline
+      */
+    Format &operator<<(const NewLine &);
+
+    /** Flush output
+      */
+    Format &operator<<(const Flush &);
+
+    /** Add \a x to the output text
+      * \tparam T Type of \a x
+      * \param x Variable to be stringified
+      */
+    template<class T>
+    Format &arg(const T &x) {
+        return *this << x;
+    }
+
+private:
+    void flush();
+
+    struct State {
+        Stream stream;
+        bool discardMode;
+        bool injectionMode { false };
+        int lastPosition { 0 };
+        Bytes lastInsert {};
+        Queue<int> placeHolder {};
+    };
+
+    Shared<State> me;
+};
+
+} // namespace cc

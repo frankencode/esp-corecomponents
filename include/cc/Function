@@ -1,0 +1,16 @@
+#pragma once
+
+#include <functional>
+
+namespace cc {
+
+/** \brief Convenience type alias for std::function
+  */
+template<class T>
+using Function = std::function<T>;
+
+/** Convenience name alias
+  */
+using std::move;
+
+} // namespace cc

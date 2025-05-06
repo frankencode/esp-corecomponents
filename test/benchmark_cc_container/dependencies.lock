@@ -1,0 +1,18 @@
+dependencies:
+  esp-corecomponents:
+    dependencies:
+    - name: idf
+      version: '>=5.4'
+    source:
+      path: /home/fme/esp/esp-corecomponents
+      type: local
+    version: '*'
+  idf:
+    source:
+      type: idf
+    version: 5.5.0
+direct_dependencies:
+- esp-corecomponents
+manifest_hash: b912a23b329479d7436e9d813862d2229e3ec7898b2944c508ec4b661d5e669a
+target: esp32c5
+version: 2.0.0

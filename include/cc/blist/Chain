@@ -1,0 +1,307 @@
+#pragma once
+
+#include <cc/blist/Stop>
+#include <cc/blist/SlotMap>
+#include <cc/Locator>
+#include <cc/InOut>
+#include <cc/container>
+#include <type_traits>
+#include <iterator>
+#include <cassert>
+
+namespace cc::blist {
+
+/** \internal
+  * \brief Implemenation of a double-ended queue using interlinked buckets
+  */
+template<class T>
+class Chain
+{
+public:
+    using Item = T;
+
+    class Link final: public Stop
+    {
+    public:
+        static constexpr unsigned Capacity = 16;
+
+        Link() = default;
+
+        Link(Link *pred, Link *succ):
+            Stop{pred, succ}
+        {}
+
+        ~Link()
+        {
+            if (pred_) pred_->succ_ = succ_;
+            if (succ_) succ_->pred_ = pred_;
+
+            if (!std::is_trivial<T>::value) {
+                for (unsigned i = 0; i < fill_; ++i) {
+                    T *p = &at(i);
+                    p->~T();
+                }
+            }
+        }
+
+        Link *succ() const { return static_cast<Link *>(succ_); }
+        Link *pred() const { return static_cast<Link *>(pred_); }
+
+        T &at(unsigned nodeIndex) { return slotAt(map_.mapToSlot(nodeIndex)); }
+        const T &at(unsigned nodeIndex) const { return slotAt(map_.mapToSlot(nodeIndex)); }
+
+        template<class... Args>
+        void emplace(unsigned nodeIndex, Args... args)
+        {
+            const unsigned slotIndex = map_.pushEntry(nodeIndex, fill_);
+            ++fill_;
+            T *p = &slotAt(slotIndex);
+            new (p) T{args...};
+        }
+
+        void push(unsigned nodeIndex, const T &item)
+        {
+            const unsigned slotIndex = map_.pushEntry(nodeIndex, fill_);
+            ++fill_;
+            T *p = &slotAt(slotIndex);
+            if (!std::is_trivial<T>::value) new (p) T{item};
+            else *p = item;
+        }
+
+        void pop(unsigned nodeIndex)
+        {
+            const unsigned slotIndex = map_.popEntry(nodeIndex, fill_);
+            --fill_;
+            if (!std::is_trivial<T>::value) {
+                T *p = &slotAt(slotIndex);
+                p->~T();
+            }
+        }
+
+        template<class... Args>
+        void emplaceBack(Args... args) { emplace(fill_, args...); }
+
+        void pushBack(const T &item) { push(fill_, item); }
+        void popBack(Out<T> item) { item << at(fill_ - 1); pop(fill_ - 1); }
+
+        template<class... Args>
+        void emplaceFront(Args... args) { emplace(0, args...); }
+
+        void pushFront(const T &item) { push(0, item); }
+        void popFront(Out<T> item) { item << at(0); pop(0); }
+
+        bool isFull() const { return fill_ == Capacity; }
+        bool isEmpty() const { return fill_ == 0; }
+
+        T &slotAt(unsigned nodeIndex) { return reinterpret_cast<T *>(data_)[nodeIndex]; }
+        const T& slotAt(unsigned nodeIndex) const { return reinterpret_cast<const T *>(data_)[nodeIndex]; }
+
+        SlotMap<Capacity> map_;
+        alignas(T) std::uint8_t data_[Capacity * sizeof(T)];
+    };
+
+    Chain() = default;
+
+    Chain(const Chain &other)
+    {
+        for (auto pos = other.head(); pos; ++pos)
+            pushBack(other.at(pos));
+    }
+
+    ~Chain()
+    {
+        deplete();
+    }
+
+    long count() const { return count_; }
+
+    const T &first() const
+    {
+        CC_CONTAINER_ASSERT(count() > 0);
+        return head_->at(0);
+    }
+
+    const T &last() const
+    {
+        CC_CONTAINER_ASSERT(count() > 0);
+        return tail_->at(tail_->fill_ - 1);
+    }
+
+    Locator head() const
+    {
+        return Locator{revision(), 0, head_, 0};
+    }
+
+    Locator tail() const
+    {
+        return Locator{revision(), count_ - 1, tail_, tail_ ? tail_->fill_ - 1 : 0};
+    }
+
+    T &at(const Locator &target) const
+    {
+        CC_CONTAINER_ASSERT(target);
+        CC_CONTAINER_ASSERT(target.revisionPtr_ == &revision_); // locator needs to belong to this container
+        CC_CONTAINER_ASSERT(target.revisionSaved_ == revision_); // locator needs to be up-to-date
+
+        return static_cast<Node *>(target.stop_)->at(target.egress_);
+    }
+
+    template<class Access = T>
+    static Access &value(const Locator &target)
+    {
+        return static_cast<Node *>(target.stop_)->at(target.egress_);
+    }
+
+    template<class... Args>
+    void emplaceBack(Args... args)
+    {
+        if (tail_) {
+            if (tail_->isFull())
+                tail_ = new Node{tail_, nullptr};
+        }
+        else {
+            head_ = tail_ = new Node;
+        }
+
+        tail_->emplaceBack(args...);
+
+        ++count_;
+        #ifdef CONFIG_CORECOMPONENTS_CONTAINER_ASSERTS
+        ++revision_;
+        #endif
+    }
+
+    template<class... Args>
+    void emplaceFront(Args... args)
+    {
+        if (head_) {
+            if (head_->isFull())
+                head_ = new Node{nullptr, head_};
+        }
+        else {
+            head_ = tail_ = new Node;
+        }
+
+        head_->emplaceFront(args...);
+
+        ++count_;
+        #ifdef CONFIG_CORECOMPONENTS_CONTAINER_ASSERTS
+        ++revision_;
+        #endif
+    }
+
+    void pushBack(const T &item)
+    {
+        if (tail_) {
+            if (tail_->isFull())
+                tail_ = new Node{tail_, nullptr};
+        }
+        else {
+            head_ = tail_ = new Node;
+        }
+
+        tail_->pushBack(item);
+
+        ++count_;
+        #ifdef CONFIG_CORECOMPONENTS_CONTAINER_ASSERTS
+        ++revision_;
+        #endif
+    }
+
+    void pushFront(const T &item)
+    {
+        if (head_) {
+            if (head_->isFull())
+                head_ = new Node{nullptr, head_};
+        }
+        else {
+            head_ = tail_ = new Node;
+        }
+
+        head_->pushFront(item);
+
+        ++count_;
+        #ifdef CONFIG_CORECOMPONENTS_CONTAINER_ASSERTS
+        ++revision_;
+        #endif
+    }
+
+    void popBack(Out<T> item)
+    {
+        CC_CONTAINER_ASSERT(tail_ && !tail_->isEmpty());
+
+        tail_->popBack(&item);
+
+        if (tail_->isEmpty()) {
+            Node *oldTail = tail_;
+            tail_ = tail_->pred();
+            if (head_ == oldTail) head_ = nullptr;
+            delete oldTail;
+        }
+
+        --count_;
+        #ifdef CONFIG_CORECOMPONENTS_CONTAINER_ASSERTS
+        ++revision_;
+        #endif
+    }
+
+    void popFront(Out<T> item)
+    {
+        CC_CONTAINER_ASSERT(head_ && !head_->isEmpty());
+
+        head_->popFront(&item);
+
+        if (head_->isEmpty()) {
+            Node *oldHead = head_;
+            head_ = head_->succ();
+            if (tail_ == oldHead) tail_ = nullptr;
+            delete oldHead;
+        }
+
+        --count_;
+        #ifdef CONFIG_CORECOMPONENTS_CONTAINER_ASSERTS
+        ++revision_;
+        #endif
+    }
+
+    void deplete()
+    {
+        if (count_ == 0) return;
+
+        for (Node *node = head_; node;) {
+            Node *oldNode = node;
+            node = node->succ();
+            oldNode->pred_ = nullptr;
+            oldNode->succ_ = nullptr;
+            delete oldNode;
+        }
+
+        head_ = nullptr;
+        tail_ = nullptr;
+        count_ = 0;
+        #ifdef CONFIG_CORECOMPONENTS_CONTAINER_ASSERTS
+        ++revision_;
+        #endif
+    }
+
+private:
+    using Node = Link;
+
+    const unsigned *revision() const
+    {
+    #ifdef CONFIG_CORECOMPONENTS_CONTAINER_ASSERTS
+        return &revision_;
+    #else
+        return nullptr;
+    #endif
+    }
+
+    Node *head_ { nullptr };
+    Node *tail_ { nullptr };
+    long count_ { 0 };
+    #ifdef CONFIG_CORECOMPONENTS_CONTAINER_ASSERTS
+    unsigned revision_ { 0 };
+    #endif
+};
+
+} // namespace cc::blist

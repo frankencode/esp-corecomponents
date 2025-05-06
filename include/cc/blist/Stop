@@ -1,0 +1,27 @@
+#pragma once
+
+namespace cc::blist {
+
+/** \internal
+  * \brief Basic iteratable bucket stop
+  */
+class Stop
+{
+public:
+    Stop() = default;
+
+    Stop(Stop *pred, Stop *succ):
+        succ_{succ},
+        pred_{pred}
+    {
+        if (pred) pred->succ_ = this;
+        if (succ) succ->pred_ = this;
+    }
+
+    Stop *succ_ { nullptr };
+    Stop *pred_ { nullptr };
+    unsigned short fill_ { 0 };
+    unsigned short slotIndex_ { 0 };
+};
+
+} // namespace cc::blist

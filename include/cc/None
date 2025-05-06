@@ -1,0 +1,11 @@
+#pragma once
+
+namespace cc {
+
+/** \class None cc/None
+  * \brief Type of an unused return value
+  * \see \ref InOut
+  */
+class None {};
+
+} // namespace cc

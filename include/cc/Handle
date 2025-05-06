@@ -1,0 +1,287 @@
+#pragma once
+
+#include <type_traits>
+#include <compare>
+#include <cstddef>
+#include <cstdint>
+#include <cassert>
+
+namespace cc {
+
+/** \internal
+  */
+struct Alias {};
+
+/** \internal
+  */
+struct Weak {};
+
+/** \internal
+  * \class Handle cc/Handle
+  * \ingroup objects
+  * \brief Reference to an object state
+  * \tparam T %Internal state type (needs to be inherited from Object::State)
+  */
+template<class T>
+class Handle
+{
+public:
+    /** Create a null reference
+      */
+    Handle() = default;
+
+    /** Create a null reference
+      */
+    Handle(std::nullptr_t) {}
+
+    /** Initialize with a newly created object state \a newState
+      */
+    Handle(T *newState):
+        state_{encode(newState)}
+    {
+        assert(newState && newState->useCount() == 1);
+    }
+
+    Handle(T *state, Alias):
+        state_{encode(state)}
+    {
+        assert(state);
+        state->acquire();
+    }
+
+    Handle(const T *state, Alias):
+        Handle{const_cast<T *>(state), Alias{}}
+    {}
+
+    Handle(T *state, Weak):
+        state_{encode(state, true)}
+    {
+        assert(state);
+    }
+
+    Handle(const T *state, Weak):
+        Handle{const_cast<T* >(state), Weak{}}
+    {}
+
+    /** Initialize by reference \a other
+      */
+    Handle(const Handle &other):
+        state_{other.state_}
+    {
+        acquire();
+    }
+
+    /** Initialize by right-side reference \a other
+      */
+    Handle(Handle &&other):
+        state_{other.state_}
+    {
+        other.state_ = nullptr;
+    }
+
+    /** Cleanup
+      */
+    ~Handle()
+    {
+        release();
+        #ifndef NDEBUG
+        if (state_) state_ = nullptr;
+        #endif
+    }
+
+    /** Assign reference \a other
+      */
+    Handle &operator=(const Handle &other)
+    {
+        release();
+        state_ = other.state_;
+        acquire();
+        return *this;
+    }
+
+    /** Assign right-side reference \a other
+      */
+    Handle &operator=(Handle &&other)
+    {
+        release();
+        state_ = other.state_;
+        other.state_ = nullptr;
+        return *this;
+    }
+
+    /** Assign nullptr
+      */
+    Handle &operator=(std::nullptr_t)
+    {
+        release();
+        state_ = nullptr;
+        return *this;
+    }
+
+    /** Get access to the object state
+      */
+    T &operator()()
+    {
+        T *state = decode(state_);
+        assert(state);
+        return *state;
+    }
+
+    /** Get access to the object state
+      */
+    const T &operator()() const
+    {
+        const T *state = decode(state_);
+        assert(state);
+        return *state;
+    }
+
+    /** Check if this reference points to a non-null object state
+      */
+    operator bool() const
+    {
+        return state_;
+    }
+
+    /** Equality operator
+      */
+    bool operator==(const Handle &other) const
+    {
+        return state() == other.state();
+    }
+
+    /** Equality operator
+      */
+    bool operator==(const T *other) const
+    {
+        return state() == other;
+    }
+
+    /** Ordering operator
+      */
+    std::strong_ordering operator<=>(const Handle &other) const
+    {
+        return state() <=> other.state();
+    }
+
+    /** Ordering operator
+      */
+    std::strong_ordering operator<=>(const T *other) const
+    {
+        return state() <=> other;
+    }
+
+    /** Statically cast to a different state type \a T2
+      */
+    template<class T2>
+    const T2 &as() const {
+        assert(state_);
+        return static_cast<const T2 &>((*this)());
+    }
+
+    /** Statically cast to a different state type \a T2
+      */
+    template<class T2>
+    T2 &as() {
+        assert(state_);
+        return static_cast<T2 &>(*decode(state_));
+    }
+
+    /** Check if this handle points to an object state of type T2
+      */
+    template<class T2>
+    bool is() const
+    {
+        return std::is_base_of<T2, T>::value || (state_ && dynamic_cast<const T2 *>(decode(state_)));
+    }
+
+    /** Check if this handle is a weak reference
+      */
+    bool isWeak() const
+    {
+        return isWeak(state_);
+    }
+
+    /** \internal
+      * Explicitly break constness
+      */
+    T &mutate() const
+    {
+        assert(state_);
+        return *decode(state_);
+    }
+
+private:
+    static T *encode(T *state, bool weak = false)
+    {
+        if (weak && state) {
+            return
+                reinterpret_cast<T *>(
+                    reinterpret_cast<uintptr_t>(state) | 1
+                );
+        }
+        return state;
+    }
+
+    static T *decode(T *state)
+    {
+        return
+            reinterpret_cast<T *>(
+                reinterpret_cast<uintptr_t>(state) & ~uintptr_t(1)
+            );
+    }
+
+    static bool isWeak(T *state)
+    {
+        return reinterpret_cast<uintptr_t>(state) & 1;
+    }
+
+    void acquire()
+    {
+        if (state_) {
+            if (!isWeak(state_)) {
+                decode(state_)->acquire();
+            }
+        }
+    }
+
+    void release()
+    {
+        if (state_) {
+            if (!isWeak(state_)) {
+                decode(state_)->release();
+            }
+        }
+    }
+
+    template<class T2>
+    friend bool operator<(const Handle<T2> &a, const T2 *b);
+
+    template<class T2>
+    friend bool operator<(const T2 *a, const Handle<T2> &b);
+
+    const T *state() const { return decode(state_); }
+
+    union {
+        T *state_ { nullptr };
+        void *pointer_;
+    };
+};
+
+/** Lower than operator
+  */
+template<class T>
+inline bool operator<(const Handle<T> &a, const T *b)
+{
+    return a.state() < b;
+}
+
+/** Lower than operator
+  */
+template<class T>
+inline bool operator<(const T *a, const Handle<T> &b)
+{
+    return a < b.state();
+}
+
+} // namespace cc

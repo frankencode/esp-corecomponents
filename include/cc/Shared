@@ -1,0 +1,102 @@
+#pragma once
+
+#include <cc/Use>
+
+namespace cc {
+
+/** \internal
+  * \class Shared cc/basics
+  * \ingroup basics
+  * \brief %Shared aggregate
+  * \tparam T Type of shared data structure
+  */
+template<class T>
+class Shared
+{
+    using Data = typename Use<T>::Data;
+
+public:
+    /** Initial construction of the aggregate
+      * \param args construction arguments for the aggregate value
+      */
+    template<class... Args>
+    explicit Shared(Args... args):
+        data{new Data{args...}}
+    {}
+
+    explicit Shared(Use<T> &handle):
+        data{handle.data}
+    {
+        data->acquire();
+    }
+
+    /** Initialize by aggregate \a other
+      */
+    Shared(const Shared &other):
+        data{other.data}
+    {
+        data->acquire();
+    }
+
+    /** Initialize by right-side aggregate \a other
+      */
+    Shared(Shared &&other):
+        data{other.data}
+    {
+        other.data = nullptr;
+    }
+
+    /** Cleanup
+      */
+    ~Shared()
+    {
+        if (data) data->release();
+        #ifndef NDEBUG
+        data = nullptr;
+        #endif
+    }
+
+    /** Assign aggregate \a other
+      */
+    Shared &operator=(const Shared &other)
+    {
+        if (data) data->release();
+        data = other.data;
+        data->acquire();
+        return *this;
+    }
+
+    /** Assign right-side aggregate \a other
+      */
+    Shared &operator=(Shared &&other)
+    {
+        if (data) data->release();
+        data = other.data;
+        other.data = nullptr;
+        return *this;
+    }
+
+    /** Get reference to aggregate value
+      */
+    T &operator()() { return Use<T>::value(data); }
+
+    /** Get constant reference to aggregate value
+      */
+    const T &operator()() const { return Use<T>::value(data); }
+
+    /** %Return the usage count for this aggregate
+      */
+    long useCount() const { return data->useCount(); }
+
+    /** Check if is null
+      */
+    bool isNull() const { return !data; }
+
+private:
+    template<class>
+    friend class Use;
+
+    Data *data;
+};
+
+} // namespace cc

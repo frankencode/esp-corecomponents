@@ -1,0 +1,30 @@
+#pragma once
+
+#include <cassert>
+
+namespace cc {
+
+/** \class Dim cc/Dim
+  * \ingroup container
+  * \brief Provide dimensions for container initialization
+  */
+template<int N = 1>
+class Dim
+{};
+
+template<>
+class Dim<1>
+{
+public:
+    Dim() = default;
+    explicit Dim(long size): size_{size} {}
+    long operator[](int index) const {
+        CC_CONTAINER_ASSERT(index == 0);
+        return size_;
+    }
+
+private:
+    long size_ { 0 };
+};
+
+} // namespace cc

@@ -1,0 +1,135 @@
+#pragma once
+
+#include <cmath>
+
+namespace cc {
+
+/** \name Rounding Functions
+  */
+///@{
+/// \ingroup math
+
+/** Round \a x towards nearest integral number or if ambigious towards +-infinity
+  */
+inline double roundNearestOrOut(double x)
+{
+    double ip; // integral part
+    double fp = std::modf(x, &ip); // fractional part;
+    return ip - int(fp <= -0.5) + int(0.5 <= fp);
+}
+
+/** Round \a x towards nearest integral number or if ambigious towards zero
+  */
+inline double roundNearestOrIn(double x)
+{
+    double ip; // integral part
+    double fp = std::modf(x, &ip); // fractional part;
+    return ip - int(fp < -0.5) + int(0.5 < fp);
+}
+
+/** Round \a x towards the nearest multiple of \a y or if ambiguous towards zero
+  */
+inline double roundNearestOrIn(double x, double y)
+{
+    double r = std::fmod(x, y);
+    double a = x - r;
+    double b = (x >= 0) ? a + y : a - y;
+    return std::fabs(x - a) <= std::fabs(x - b) ? a : b;
+}
+
+/** Round \a x towards the nearest multiple of \a y or if ambiguous towards +-infinity
+  */
+inline double roundNearestOrOut(double x, double y)
+{
+    double r = std::fmod(x, y);
+    double a = x - r;
+    double b = (x >= 0) ? a + y : a - y;
+    return std::fabs(x - a) < std::fabs(x - b) ? a : b;
+}
+
+/** Round \a x towards next integral number towards +-infinity
+  */
+inline double roundOut(double x)
+{
+    double ip; // integral part
+    double fp = std::modf(x, &ip); // fractional part;
+    return ip - int(fp < 0) + int(0 < fp);
+}
+
+/** Round \a x towards next integral number towards zero
+  */
+inline double roundIn(double x)
+{
+    double ip; // integral part
+    std::modf(x, &ip);
+    return ip;
+}
+
+/** Round \a x towards the next integral number towards +infinity
+  */
+inline double roundUp(double x)
+{
+    double ip; // integral part
+    double fp = std::modf(x, &ip); // fractional part;
+    return ip + int(0 < fp);
+}
+
+/** Round \a x towards the next integral number towards -infinity
+  */
+inline double roundDown(double x)
+{
+    double ip; // integral part
+    double fp = std::modf(x, &ip); // fractional part;
+    return ip - int(fp < 0);
+}
+
+/** Round \a x down to the next multiple of a whole number \a g
+  */
+template<class G, class X>
+X downToNext(G g, X x) { return x - x % g; }
+
+/** Round \a x up to the next multiple of a whole number \a g
+  */
+template<class G, class X>
+X upToNext(G g, X x) { return x - x % g + (x % g != 0 ? g : 0); }
+
+/** Rounded up logarithm of \a n to base \a B
+  */
+template<int B>
+int ilog(int n)
+{
+    int i = 0;
+    for (int h = 1; h <= n; h *= B)
+        ++i;
+    return i;
+}
+
+///@}
+
+/** \name Utility Functions
+  */
+///@{
+/// \ingroup math
+
+/** %Return sign of \a x -1 if x < 0, +1 if x >= 0)
+  */
+template<class T>
+int sign(T x) { return 1 - 2 * (x < 0); }
+
+/** %Return signum of \a x (-1 if x < 0, +1 if x > 0, 0 if x == 0)
+  */
+template<class T>
+int sgn(T x) { return (0 < x) - (x < 0); }
+
+/** Limit \a x to the range [\a min, \a max]
+  */
+template<class T>
+T bound(T min, T x, T max) {
+    if (x < min) x = min;
+    else if (x > max) x = max;
+    return x;
+}
+
+///@}
+
+} // namespace cc

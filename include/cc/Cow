@@ -1,0 +1,113 @@
+#pragma once
+
+#include <cc/Use>
+
+namespace cc {
+
+/** \internal
+  * \class Cow cc/basics
+  * \ingroup basics
+  * \brief Copy-on-write aggregate
+  * \tparam T Value type
+  */
+template<class T>
+class Cow
+{
+    using Data = typename Use<T>::Data;
+
+public:
+    Cow():
+        data{new Data}
+    {}
+
+    /** Initial construction of the aggregate
+      * \param args construction arguments for the aggregate value
+      */
+    template<class... Args>
+    explicit Cow(Args... args):
+        data{new Data{args...}}
+    {}
+
+    /** Initialize by aggregate \a other
+      */
+    Cow(const Cow &other):
+        data{other.data}
+    {
+        data->acquire();
+    }
+
+    /** Initialize by right-side aggregate \a other
+      */
+    Cow(Cow &&other):
+        data{other.data}
+    {
+        other.data = nullptr;
+    }
+
+    /** Cleanup
+      */
+    ~Cow()
+    {
+        if (data) data->release();
+        #ifndef NDEBUG
+        data = nullptr;
+        #endif
+    }
+
+    /** Assign aggregate \a other
+      */
+    Cow &operator=(const Cow &other)
+    {
+        data->release();
+        data = other.data;
+        data->acquire();
+        return *this;
+    }
+
+    /** Assign right-side aggregate \a other
+      */
+    Cow &operator=(Cow &&other)
+    {
+        data->release();
+        data = other.data;
+        other.data = nullptr;
+        return *this;
+    }
+
+    /** Get constant reference to aggregate value
+      */
+    const T &operator()() const { return value(); }
+
+    /** Get reference to aggregate value
+      */
+    T &operator()() { return touch(); }
+
+    /** Get constant reference to aggregate value
+      */
+    const T &value() const { return Use<T>::value(data); }
+
+    /** Get reference to aggregate value
+      */
+    T &touch()
+    {
+        if (data->useCount() > 1) {
+            Data *oldData = data;
+            data = new Data{value()};
+            oldData->release();
+        }
+
+        return Use<T>::value(data);
+    }
+
+    /** %Return the usage count for this aggregate
+      */
+    long useCount() const { return data->useCount(); }
+
+private:
+    template<class>
+    friend class Use;
+
+    Data *data;
+};
+
+} // namespace cc

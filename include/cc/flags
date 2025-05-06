@@ -1,0 +1,36 @@
+#pragma once
+
+#include <type_traits>
+
+namespace cc {
+
+template<class EnumType>
+class EnumMask
+{
+public:
+    using Integer = typename std::underlying_type<EnumType>::type;
+
+    EnumMask(EnumType flag): flag_{flag} {}
+
+    operator bool() const { return static_cast<Integer>(flag_) != 0; }
+    operator EnumType() const { return flag_; }
+    Integer operator+() const { return static_cast<Integer>(flag_); }
+
+private:
+    const EnumType flag_;
+};
+
+/** Declare bitwise operators (&, |, ^, ~, &=, |=, ^=) for an enumeration class type
+  */
+#define CC_FLAGS(EnumType) \
+inline EnumMask<EnumType> operator&(EnumType x, EnumType y) { return static_cast<EnumType>(static_cast<std::underlying_type<EnumType>::type>(x) & static_cast<std::underlying_type<EnumType>::type>(y)); } \
+inline EnumMask<EnumType> operator|(EnumType x, EnumType y) { return static_cast<EnumType>(static_cast<std::underlying_type<EnumType>::type>(x) | static_cast<std::underlying_type<EnumType>::type>(y)); } \
+inline EnumMask<EnumType> operator^(EnumType x, EnumType y) { return static_cast<EnumType>(static_cast<std::underlying_type<EnumType>::type>(x) ^ static_cast<std::underlying_type<EnumType>::type>(y)); } \
+constexpr EnumType operator~(EnumType x) { return static_cast<EnumType>(~static_cast<std::underlying_type<EnumType>::type>(x)); } \
+inline EnumType operator~(const EnumMask<EnumType> &mask) { return ~static_cast<EnumType>(mask); } \
+inline EnumType& operator&=(EnumType& x, EnumType y) { x = x & y; return x; } \
+inline EnumType& operator|=(EnumType& x, EnumType y) { x = x | y; return x; } \
+inline EnumType& operator^=(EnumType& x, EnumType y) { x = x ^ y; return x; } \
+inline constexpr std::underlying_type<EnumType>::type operator+(const EnumType &x) { return static_cast<std::underlying_type<EnumType>::type>(x); }
+
+} // namespace cc

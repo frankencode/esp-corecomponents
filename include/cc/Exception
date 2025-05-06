@@ -1,0 +1,27 @@
+#pragma once
+
+#include <cc/String>
+#include <exception>
+
+namespace cc {
+
+using StdException = std::exception;
+
+/** \class Exception cc/Exception
+  * \ingroup exceptions
+  * \brief %Abstract base class for exceptions
+  */
+class Exception: public StdException
+{
+public:
+    /** Generate error message for debug output
+      */
+    virtual String message() const = 0;
+
+private:
+    const char* what() const throw() override;
+};
+
+inline String str(const Exception &ex) { return ex.message(); }
+
+} // namespace cc

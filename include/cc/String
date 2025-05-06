@@ -1,0 +1,1296 @@
+#pragma once
+
+#include <cc/Array>
+#include <cc/List>
+#include <cc/InOut>
+#include <cc/chars>
+#include <cmath>
+
+namespace cc {
+
+/** %Scan a number literal
+  * \param text %Input text
+  * \param value Returns the value of the scanned number
+  * \param base %Number base to use
+  * \param i0 Begin of range to scan (index of first character)
+  * \param i1 End of range to scan (index behind the last charater)
+  * \return Final scan position
+  */
+template<class Number, class Text>
+long scanNumber(const Text &text, Out<Number> value, int base = -1, long i0 = 0, long i1 = -1)
+{
+    long i = i0;
+    if (i1 < 0) i1 = text.count();
+    if (i > i1) i = i1;
+    int sign = 1;
+    if (Number(-1) < Number()) {
+        if (i < i1) {
+            if (text.at(i) == '-') sign = -1;
+            i += (text.at(i) == '-' || text.at(i) == '+');
+        }
+    }
+    else if (i < i1) {
+        i += text.at(i) == '+';
+    }
+    if (std::is_floating_point<Number>::value && i + 2 < i1) {
+        if (text.at(i) == 'n' && text.at(i + 1) == 'a' && text.at(i + 2) == 'n') {
+            value = 0.0 / 0.0;
+            return i + 3;
+        }
+        else if (text.at(i) == 'i' && text.at(i + 1) == 'n' && text.at(i + 2) == 'f') {
+            value = sign / 0.0;
+            return i + 3;
+        }
+    }
+    if (i < i1 && base <= 0) {
+        if (text.at(i) == '0') {
+            if (i + 1 < i1) {
+                char ch = text.at(i + 1);
+                if (ch == 'x') { base = 16; i += 2; }
+                else if (ch == 'b') { base = 2; i += 2; }
+                else if ('0' <= ch && ch <= '7') { base = 8; i += 1; }
+            }
+        }
+    }
+    if (base <= 0) base = 10;
+    Number x = 0;
+    while (i < i1) {
+        char ch = text.at(i);
+        int z = -1;
+        if ('0' <= ch && ch <= '9') z = ch - '0';
+        else if ('a' <= ch && ch <= 'z') z = 10 + ch - 'a';
+        else if ('A' <= ch && ch <= 'Z') z = 10 + ch - 'A';
+        if (z < 0 || base <= z) break;
+        Number y = x;
+        x = x * base + sign * z;
+        if (!std::is_floating_point<Number>::value) {
+            if (sign > 0 ? x < y : y < x)
+                break;
+        }
+        ++i;
+    }
+    if (std::is_floating_point<Number>::value && i < i1) {
+        if (text.at(i) == '.') {
+            ++i;
+            for (Number h = Number(sign) / Number(base); i < i1; ++i) {
+                char ch = text.at(i);
+                int z = -1;
+                if ('0' <= ch && ch <= '9') z = ch - '0';
+                else if ('a' <= ch && ch <= 'z') z = 10 + ch - 'a';
+                else if ('A' <= ch && ch <= 'Z') z = 10 + ch - 'A';
+                if (z < 0 || base <= z) break;
+                x += h * z;
+                h /= base;
+            }
+        }
+        if (i + 1 < i1) {
+            if (text.at(i) == 'E' || text.at(i) == 'e') {
+                int ep = 0;
+                i = scanNumber<int>(text, &ep, base, i + 1, i1);
+                x *= std::pow(Number(base), Number(ep));
+            }
+        }
+    }
+    value = x;
+    return i;
+}
+
+template<class T>
+class StringParser {
+public:
+    static bool read(Out<T> value, const String &text);
+};
+
+/** \class String cc/String
+  * \ingroup strings
+  * \brief %String of characters
+  */
+class String: public Bytes
+{
+public:
+    using Item = char; ///< Item type
+
+    /** \name Construction and Assignment
+      */
+    ///@{
+
+    /** Create an empty string
+      */
+    String() = default;
+
+    /** Create a string of \a n characters initialized with \a b
+      */
+    static String allocate(long n, char b)
+    {
+        return String{n, b, Allocate{}};
+    }
+
+    /** Create an uninitialized string of \a n characters
+      */
+    static String allocate(long n)
+    {
+        return String{n, Allocate{}};
+    }
+
+    /** Construct a copy of string literal \a b
+      */
+    String(const char *b):
+        Bytes{(b ? len(b) : 0) + 1, Allocate{}}
+    {
+        if (b) std::memcpy(me().items, b, me().count * sizeof(char));
+        else me().items[0] = 0;
+        --me().count;
+    }
+
+    /** Construct a copy of of the first \a n characters of \a b
+      */
+    String(const char *b, long n):
+        Bytes{n + 1, Allocate{}}
+    {
+        if (n > 0) std::memcpy(me().items, b, n * sizeof(char));
+        --me().count;
+        me().items[me().count] = 0;
+    }
+
+    /** Construct a deep copy of the sub-string [\a i0, \a i1) of \a b
+      */
+    String(const Bytes &b, long i0, long i1):
+        Bytes{i1 - i0 + 1, Allocate{}}
+    {
+        assert(i0 <= i1);
+        std::memcpy(me().items, b.items() + i0, (i1 - i0) * sizeof(char));
+        --me().count;
+        me().items[me().count] = 0;
+    }
+
+    /** Join a list of strings
+      */
+    template<class Part>
+    String(const List<Part> &parts):
+        Bytes{totalCount(parts) + 1, Allocate{}}
+    {
+        assignParts(parts);
+    }
+
+    /** \copydoc String(const List<Part> &, const char *sep, long sepCount)
+      */
+    template<class Part>
+    explicit String(const List<Part> &parts, const String &sep):
+        String{parts, sep.chars(), sep.count()}
+    {}
+
+    /** \copydoc String(const List<Part> &, const char *sep, long sepCount)
+      */
+    template<class Part>
+    explicit String(const List<Part> &parts, char sep):
+        String{parts, &sep, 1}
+    {}
+
+    /** Join a list of strings using \a sep as interposing separator
+      */
+    template<class Part>
+    explicit String(const List<Part> &parts, const char *sep):
+        String{parts, sep, len(sep)}
+    {}
+
+    /** Join a list of strings using \a sep as interposing separator
+      * \tparam Part %Type of the parts to join together: either String or Bytes
+      */
+    template<class Part>
+    explicit String(const List<Part> &parts, const char *sep, long sepCount):
+        Bytes{totalCount(parts) + (parts.count() - (parts.count() > 0)) * sepCount + 1, Allocate{}}
+    {
+        assert(sepCount >= 0);
+        long offset = 0;
+        for (long i = 0; i < parts.count(); ++i) {
+            auto &src = parts[i].me();
+            std::memcpy(me().items + offset, src.items, src.count * sizeof(char));
+            offset += src.count;
+            if (i != parts.count() - 1) {
+                std::memcpy(me().items + offset, sep, sepCount * sizeof(char));
+                offset += sepCount;
+            }
+        }
+        --me().count;
+        me().items[me().count] = 0;
+    }
+
+    ///@}
+
+    /** \name Item Access
+      */
+    ///@{
+
+    /** Get the length of the string in number of characters
+      */
+    long count() const { return me().count; }
+
+    /** Check if this string is non-empty
+      */
+    explicit operator bool() const { return count() > 0; }
+
+    /** \copydoc count() const
+      */
+    long operator+() const { return me().count; }
+
+    /** Check if \a i is a valid index
+      */
+    bool has(long i) const { return 0 <= i && i < me().count; }
+
+    /** Get a reference to the character at \a i
+      */
+    char &at(long i)
+    {
+        assert(0 <= i && i < count());
+        return chars()[i];
+    }
+
+    /** Get a constant reference to the character at \a i
+      */
+    const char &at(long i) const
+    {
+        assert(0 <= i && i < count());
+        return chars()[i];
+    }
+
+    /** \copydoc at(long)
+      */
+    char &operator[](long i) { return at(i); }
+
+    /** \copydoc at(long) const
+      */
+    const char &operator[](long i) const { return at(i); }
+
+    /** Help the C++ compiler to not fall back to operator char*() for index access.
+      */
+    char &operator[](int i) { return at(i); }
+
+    /** Help the C++ compiler to not fall back to operator char*() for index access.
+      */
+    const char &operator[](int i) const { return at(i); }
+
+    /** Get value at \a i if 0 <= i && i < count(), otherwise return \a fallback
+      */
+    char operator()(long i, char fallback = '\0') const
+    {
+        return has(i) ? at(i) : fallback;
+    }
+
+    /** Check if the first character of this string equals \a b
+      */
+    bool startsWith(char b) const
+    {
+        return count() > 0 && at(0) == b;
+    }
+
+    /** Check if this string starts with sub-string \a b
+      */
+    bool startsWith(const char *b, long bn = -1) const
+    {
+        if (bn < 0) bn = len(b);
+        long n = count();
+        return bn <= n && std::strncmp(chars(), b, bn) == 0;
+    }
+
+    /** \copydoc startsWith(const char *, long) const
+      */
+    bool startsWith(const String &b) const
+    {
+        return startsWith(b.chars(), b.count());
+    }
+
+    /** Check if the last character of this string equals \a b
+      */
+    bool endsWith(char b) const
+    {
+        long n = count();
+        return n > 0 && at(n - 1) == b;
+    }
+
+    /** Check if this tring ends with sub-string \a b
+      */
+    bool endsWith(const char *b, long bn = -1) const
+    {
+        if (bn < 0) bn = len(b);
+        long n = count();
+        return bn <= n && std::strncmp(chars() + n - bn, b, bn) == 0;
+    }
+
+    /** \copydoc endsWith(const char *, long) const
+      */
+    bool endsWith(const String &b) const
+    {
+        return endsWith(b.chars(), b.count());
+    }
+
+    ///@}
+
+    /** \name Global Operations
+      */
+    ///@{
+
+    /** Create a deep copy of this string
+      */
+    String copy() const
+    {
+        return String{chars(), count()};
+    }
+
+    /** Create a deep copy of range [\a i0, \a i1)
+      */
+    String copy(long i0, long i1) const
+    {
+        assert(0 <= i0 && i0 <= i1 && i1 <= count());
+        long m = i1 - i0;
+        if (m <= 0) return String{};
+        return String{chars() + i0, m};
+    }
+
+    /** Resize this string to \a n characters preserving the contents (new characters preset with '\0')
+      */
+    void resize(long n)
+    {
+        assert(n >= 0);
+        if (count() != n) {
+            Array old = *this;
+            (*this) = String::allocate(n, '\0');
+            old.copyTo(this);
+        }
+    }
+
+    /** Reduce the length of this string to \a n characters without freeing memory
+      */
+    void truncate(long n)
+    {
+        assert(n >= 0);
+        if (n < me().count) {
+            me().count = n;
+            if (!me().parent)
+                me().items[n] = 0;
+        }
+    }
+
+    /** %Return a selection of range [\a i0, \a i1)
+      */
+    String select(long i0, long i1)
+    {
+        assert(0 <= i0 && i0 <= i1 && i1 <= count());
+        return String{me, i0, i1};
+    }
+
+    /** Select the first \a n characters or less (if \a n > count())
+      */
+    String selectHead(long n)
+    {
+        assert(n >= 0);
+        if (count() < n) n = count();
+        return select(0, n);
+    }
+
+    /** Select the last \a n characters or less (if \a n > count())
+      */
+    String selectTail(long n)
+    {
+        assert(n >= 0);
+        if (count() < n) n = count();
+        return select(count() - n, count());
+    }
+
+    /** %Return a selection of range [\a i0, \a i1) in \a target
+      * \return Reference to this string
+      */
+    String &selectAs(long i0, long i1, Out<String> target)
+    {
+        assert(0 <= i0 && i0 <= i1 && i1 <= count());
+
+        State &targetState = target->me();
+        targetState.~State();
+        targetState.count = i1 - i0;
+        targetState.isWrapped = 0;
+        targetState.items = me().items + i0;
+        targetState.parent = me;
+
+        return *target;
+    }
+
+    /** Align text to the left
+      * \param w Width of display field
+      * \param blank Fill character
+      * \return Left aligned text
+      */
+    String alignedLeft(int w, char blank = ' ') const;
+
+    /** Align text to the right
+      * \param w Width of display field
+      * \param blank Fill character
+      * \return Right aligned text
+      */
+    String alignedRight(int w, char blank = ' ') const;
+
+    /** Get parent string if this string is a sub-string selection
+      */
+    String parent()
+    {
+        return me().parent ? String{me().parent} : *this;
+    }
+
+    /** Count the number of occurences of character \a b
+      */
+    long count(char b) const
+    {
+        long n = count();
+        const char *a = chars();
+        long o = 0;
+        for (long i = 0; i < n; ++i) {
+            if (a[i] == b) ++o;
+        }
+        return o;
+    }
+
+    /** Find character \a b
+      * \param b The character to search for
+      * \param i0 Provides the starting position and returns the final position
+      * \return True if character \a b was found, false otherwise
+      */
+    bool find(char b, InOut<long> i0 = None{}) const
+    {
+        assert(0 <= i0);
+        long n = count();
+        long i = i0;
+        const char *a = chars();
+        while (i < n) {
+            if (a[i] == b)
+                break;
+            ++i;
+        }
+        i0 = i;
+        return i < n;
+    }
+
+    /** Find sub-string \a b in this string
+      */
+    bool find(const char *b, long bn = -1, InOut<long> i0 = None{}) const;
+
+    /** \copydoc find(const char *, long, InOut<long>) const
+      */
+    bool find(const String &b, InOut<long> i0 = None{}) const
+    {
+        return find(b.chars(), b.count(), i0);
+    }
+
+    /** %Check if this string contains character \a b
+      */
+    bool contains(char b) const
+    {
+        return find(b);
+    }
+
+    /** %Check if this string contains sub-string \a b
+      */
+    bool contains(const char *b) const
+    {
+        return find(b);
+    }
+
+    /** \copydoc contains(const char *b) const
+      */
+    bool contains(const String &b) const
+    {
+        return find(b);
+    }
+
+    /** Replace all occurance of \a a in this string by \a b
+      */
+    void replace(char a, char b)
+    {
+        Bytes::replace(static_cast<uint8_t>(a), static_cast<uint8_t>(b));
+    }
+
+    /** Replace all occurance of \a b in this string by \a s
+      */
+    void replace(const char *b, const char *s)
+    {
+        return replace(b, s, len(b), len(s));
+    }
+
+    /** \copydoc replace(const char *, const char *)
+      */
+    void replace(const char *b, const String &s)
+    {
+        replace(b, s.chars(), len(b), s.count());
+    }
+
+    /** \copydoc replace(const char *, const char *)
+      */
+    void replace(const String &b, const char *s)
+    {
+        replace(b.chars(), s, b.count(), len(s));
+    }
+
+    /** \copydoc replace(const char *, const char *)
+      */
+    void replace(const String &b, const String &s)
+    {
+        replace(b.chars(), s.chars(), b.count(), s.count());
+    }
+
+    /** Obtain a copy of this string where all occurances of \a b are replaced by \a s
+      */
+    String replaced(const char *b, const char *s) const
+    {
+        return replaced(b, s, len(b), len(s));
+    }
+
+    /** \copydoc replaced(const char *, const char *) const
+      */
+    String replaced(const char *b, const String &s) const
+    {
+        return replaced(b, s.chars(), len(b), s.count());
+    }
+
+    /** \copydoc replaced(const char *, const char *) const
+      */
+    String replaced(const String &b, const char *s) const
+    {
+        return replaced(b.chars(), s, b.count(), len(s));
+    }
+
+    /** \copydoc replaced(const char *, const char *) const
+      */
+    String replaced(const String &b, const String &s) const
+    {
+        return replaced(b.chars(), s.chars(), b.count(), s.count());
+    }
+
+    /** Create a string list by splitting this string into pieces
+      * \param sep split marker(s) to search for
+      * \return list of pieces without the split marker(s)
+      */
+    List<String> split(char sep) const;
+
+    /** \copydoc split(char) const
+      */
+    List<String> split(const char *sep) const
+    {
+        return split(sep, len(sep));
+    }
+
+    /** \copydoc split(char) const
+      */
+    List<String> split(const String &sep) const
+    {
+        return split(sep.chars(), sep.count());
+    }
+
+    /** Breakup this string into equal sized pieces of \a m characters
+      */
+    List<String> breakUp(long m) const;
+
+    /** Append \a b to this string
+      */
+    String &operator+=(char b);
+
+    /** Append \a b to this string
+      */
+    String &operator+=(const char *b);
+
+    /** Append \a b to this string
+      */
+    String &operator+=(const String &b);
+
+    /** %Return a string which comprises of \a n times this string concatenated together
+      */
+    String times(long n) const;
+
+    /** \copydoc times()
+      */
+    String operator*(long n) const { return times(n); }
+
+    /** Create an edited version of this string by replacing a sub-string
+      * \param i0 begin of sub-string (index of first selected character)
+      * \param i1 end of sub-string (index behind the last selected charater)
+      * \param text text that will replace the sub-string
+      * \return new string with range [\a i0, \a i1) replaced by text
+      */
+    String paste(long i0, long i1, const String &text) const;
+
+    /** Convert all upper-case characters in this string to the corresponding lower-case characters
+      */
+    void downcase()
+    {
+        long n = count();
+        char *a = chars();
+        for (long i = 0; i < n; ++i)
+            a[i] = cc::toLower(a[i]);
+    }
+
+    /** Convert all lower-case characters in this string to the corresponding uppser-case characters
+      */
+    void upcase()
+    {
+        long n = count();
+        char *a = chars();
+        for (long i = 0; i < n; ++i)
+            a[i] = cc::toUpper(a[i]);
+    }
+
+    /** %Return a copy of this string with all upper-case characters converted to the corresponding lower-case characters
+      */
+    String downcased() const
+    {
+        String b;
+        if (count() > 0) {
+            b = copy();
+            b.downcase();
+        }
+        return b;
+    }
+
+    /** %Return a copy of this string with all lower-case characters converted to the corresponding upper-case characters
+      */
+    String upcased() const
+    {
+        String b = copy();
+        b.upcase();
+        return b;
+    }
+
+    /** Remove leading and trailing whitespace
+      * \param ls %Set of characters to detect as leading whitespace
+      * \param ts %Set of characters to detect as trailing whitespace
+      */
+    void trim(const char *ls = " \t\n\r", const char *ts = nullptr);
+
+    /** \copydoc trim(const char *, const char *)
+      */
+    void trim(const String &ls, const String &ts)
+    {
+        trim(ls.chars(), ts.chars());
+    }
+
+    /** Remove a UTF-8 encoded Byte Order Mark (BOM) if present
+      */
+    void trimBom()
+    {
+        if (
+            count() >= 3 &&
+            byteAt(0) == 0xEF &&
+            byteAt(1) == 0xBB &&
+            byteAt(2) == 0xBF
+        ) {
+            *this = selectTail(count() - 3);
+        }
+    }
+
+    /** Obtain a copy of this string with leading and trailing whitespace removed
+      * \param ls %Set of characters to detect as leading whitespace
+      * \param ts %Set of characters to detect as trailing whitespace
+      * \return Trimmed string
+      */
+    String trimmed(const char *ls = " \t\n\r", const char *ts = nullptr) const
+    {
+        String b = copy();
+        b.trim(ls, ts);
+        return b;
+    }
+
+    /** \copydoc trimmed(const char *, const char *) const
+      */
+    String trimmed(const String &ls, const String &ts) const
+    {
+        return trimmed(ls.chars(), ts.chars());
+    }
+
+    /** Remove leading whitespace
+      * \param ws &Set of characters to detect as whitespace
+      */
+    void trimLeading(const char *ws = " \t\n\r")
+    {
+        trim(ws, "");
+    }
+
+    /** \copydoc trimLeading(const char *)
+      */
+    void trimLeading(const String &ws)
+    {
+        return trimLeading(ws.chars());
+    }
+
+    /** Obtain a copy of this string with leading whitespace removed
+      * \param ws %Set of characters to detect as whitespace
+      * \return trimmed string
+      */
+    String leadingTrimmed(const char *ws = " \t\n\r") const
+    {
+        String b = copy();
+        b.trimLeading(ws);
+        return b;
+    }
+
+    /** \copydoc leadingTrimmed(const char *) const
+      */
+    String leadingTrimmed(const String &ws) const
+    {
+        return leadingTrimmed(ws.chars());
+    }
+
+    /** Remove trailing whitespace
+      * \param ws %Set of characters to detect as whitespace
+      */
+    void trimTrailing(const char *ws = " \t\n\r")
+    {
+        trim("", ws);
+    }
+
+    /** \copydoc trimTrailing(const char *)
+      */
+    void trimTrailing(const String &ws)
+    {
+        trimTrailing(ws.chars());
+    }
+
+    /** Obtain a copy of this string with trailing whitespace removed
+      * \param ws %Set of characters to detect as whitespace
+      * \return Trimmed string
+      */
+    String trailingTrimmed(const char *ws = " \t\n\r") const
+    {
+        String b = copy();
+        b.trimTrailing(ws);
+        return b;
+    }
+
+    /** \copydoc trailingTrimmed(const char *) const
+      */
+    String trailingTrimmed(const String &ws) const
+    {
+        return trailingTrimmed(ws.chars());
+    }
+
+    /** Replace multi-character whitespace sequences within this string by single space characters
+      * \param ws %et of characters to detect as whitespace
+      */
+    void simplify(const char *ws = " \t\n\r");
+
+    /** \copydoc simplify(const char *)
+      */
+    void simplify(const String &ws)
+    {
+        return simplify(ws.chars());
+    }
+
+    /** \copydoc simplify(const char *)
+      */
+    String simplified(const char *ws = " \t\n\r") const
+    {
+        String b = copy();
+        b.simplify(ws);
+        return b;
+    }
+
+    /** \copydoc simplified(const char *) const
+      */
+    String simplified(const String &ws) const
+    {
+        return simplified(ws.chars());
+    }
+
+    /** Replace all non-printable and non-ASCII characters by escape sequences
+      * \todo add support for escaping UTF-8 sequences
+      */
+    void escape()
+    {
+        String b = escaped();
+        *this = b;
+    }
+
+    /** \copydoc escape()
+      */
+    String escaped() const;
+
+    #if 0
+    /** Replace escape sequences by their character value or multi-byte representation
+      */
+    void expand();
+
+    /** \copydoc expand()
+      */
+    String expanded()
+    {
+        String b = copy();
+        b.expand();
+        return b;
+    }
+    #endif
+
+    /** Insert \a prefix at the beginning of each line of \a text
+      */
+    String indented(const String &prefix);
+
+    /** Read this string as a boolean value
+      * \param ok Returns true if this string can be completely read as a boolean value literal
+      * \return Parsed boolean value
+      */
+    bool toBool(Out<bool> ok = None{}) const;
+
+    /** Read this string as an integer number
+      * \param ok Returns true if this string can be completely read as an integer number literal
+      * \return Parsed integer value
+      */
+    int toInt(Out<bool> ok = None{}) const;
+
+    /** Read this string as an long integer number
+      * \param ok Returns true if this string can be completely read as a long integer number literal
+      * \return Parsed long integer value
+      */
+    long toLong(Out<bool> ok = None{}) const;
+
+    /** Read this string as an floating point number
+      * \param ok Returns true if this string can be completely read as a floating point number literal
+      * \return Parsed floating point value
+      */
+    double toDouble(Out<bool> ok = None{}) const;
+
+    /** Read this string as a value ot type \a T
+      * \param value Returns the parsed value, if successful
+      * \return True if successful
+      */
+    template<class T>
+    bool read(Out<T> value) const
+    {
+        return StringParser<T>::read(value, *this);
+    }
+
+    /** Read this string as a number of type \a T
+      * \tparam base Number base
+      * \param value Returns the parsed value, if successful
+      * \return True if successful
+      */
+    template<class T, int base = -1>
+    bool readNumber(Out<T> value) const
+    {
+        return scanNumber<T>(*this, &value, base) == count();
+    }
+
+    /** Read the sub-string in range [i0, i1) as a number of type \a T
+      * \tparam base Number base
+      * \param i0 Begin of sub-string (index of first selected character)
+      * \param i1 End of sub-string (index behind the last selected charater)
+      * \param value Returns the parsed value, if successful
+      * \return True if successful
+      */
+    template<class T, int base = -1>
+    bool readNumberInRange(long i0, long i1, Out<T> value) const
+    {
+        return scanNumber<T>(*this, &value, base, i0, i1) == i1;
+    }
+
+    ///@}
+
+    /** \name Standard Iterators
+      */
+    ///@{
+
+    using value_type = Item; ///< Item value type
+    using size_type = long; ///< Type of the container capacity
+
+    using iterator = ArrayIterator<String, 1>; ///< Value iterator
+
+    iterator begin() { return iterator{*this, 0}; } ///< %Return iterator pointing to the first item (if any)
+    iterator end  () { return iterator{*this, count()}; } ///< %Return iterator pointing behind the last item
+
+    using const_iterator = ArrayIterator<const String, 1>; ///< Readonly value iterator
+
+    const_iterator begin () const { return const_iterator{*this, 0}; } ///< %Return readonly iterator pointing to the first item (if any)
+    const_iterator cbegin() const { return const_iterator{*this, 0}; } ///< %Return readonly iterator pointing to the first item (if any)
+    const_iterator end   () const { return const_iterator{*this, count()}; } ///< %Return readonly iterator pointing behind the last item
+    const_iterator cend  () const { return const_iterator{*this, count()}; } ///< %Return readonly iterator pointing behind the last item
+
+    using reverse_iterator = ArrayIterator<String, -1>; ///< Reverse value iterator
+
+    reverse_iterator rbegin() { return reverse_iterator{*this, count() - 1}; } ///< %Return reverse iterator pointing to the last item (if any)
+    reverse_iterator rend  () { return reverse_iterator{*this, -1}; } ///< %Return reverse iterator pointing before the first item
+
+    using const_reverse_iterator = ArrayIterator<const String, -1>; ///< Readonly reverse value iterator
+
+    const_reverse_iterator rbegin () const { return const_reverse_iterator{*this, count() - 1}; } ///< %Return readonly reverse iterator pointing to the last item (if any)
+    const_reverse_iterator crbegin() const { return const_reverse_iterator{*this, count() - 1}; } ///< %Return readonly reverse iterator pointing to the last item (if any)
+    const_reverse_iterator rend   () const { return const_reverse_iterator{*this, -1}; } ///< %Return reverse iterator pointing before the first item
+    const_reverse_iterator crend  () const { return const_reverse_iterator{*this, -1}; } ///< %Return reverse iterator pointing before the first item
+
+    ///@}
+
+    /** \name File Paths
+      */
+    ///@{
+
+    /**  Check if this path points to the root directory
+      */
+    bool isRootPath() const
+    {
+        return count('/') == count();
+    }
+
+    /** Check if this path is an absolute path
+      */
+    bool isAbsolutePath() const
+    {
+        return startsWith('/');
+    }
+
+    /** Check if this path is a relative path
+      */
+    bool isRelativePath() const
+    {
+        return !startsWith('/');
+    }
+
+    /** Check if this is a here path (e.g. "." or "././")
+      */
+    bool isHerePath() const;
+
+    /** Convert to an absolute path
+      * \param currentDir %Absolute path to the current directory
+      * \return %Absolute path
+      */
+    String absolutePathRelativeTo(const String &currentDir) const;
+
+    /** %Return the file name component of this path
+      */
+    String fileName() const;
+
+    /** %Return the file name of this path without the file type suffix
+      * \see longBaseName()
+      */
+    String baseName() const;
+
+    /** %Return the file type suffix of this path
+      * \see shortFileSuffix()
+      */
+    String fileSuffix() const;
+
+    /** %Return the file name of this path up to the last '.' or end of string
+      * \see baseName()
+      */
+    String longBaseName() const;
+
+    /** %Return the short file type suffix of this path
+      * \see fileSuffix
+      */
+    String shortFileSuffix() const;
+
+    /** %Return the same file path without the file name's suffix
+      */
+    String sansFileSuffix() const;
+
+    /** Extend this path by \a relativePath
+      */
+    String operator/(const String &relativePath) const;
+
+    /** Navigate from this path to \a target path
+      */
+    [[nodiscard]] String cd(const String &target) const;
+
+    /** Convenience method, equivalent to cd("..")
+      */
+    [[nodiscard]] String cdUp() const;
+
+    /** Remove redundant and ambigous components from this path
+      */
+    String canonicalPath() const;
+
+    ///@}
+
+    /** \name Comparism operators
+      */
+    ///@{
+
+    /** Equality operator
+      */
+    bool operator==(const String &other) const
+    {
+        auto &a = me();
+        auto &b = other.me();
+        return a.count == b.count && std::strncmp(a.chars(), b.chars(), a.count) == 0;
+    }
+
+    /** Ordering operator
+      */
+    std::strong_ordering operator<=>(const String &other) const
+    {
+        auto &a = me();
+        auto &b = other.me();
+        std::strong_ordering ordering = std::strncmp(a.chars(), b.chars(), a.count < b.count ? a.count : b.count) <=> 0;
+        if (ordering == std::strong_ordering::equal) return a.count <=> b.count;
+        return ordering;
+    }
+
+    /** Ordering operator
+      */
+    std::strong_ordering operator<=>(const char *other) const
+    {
+        auto &a = me();
+        const char *b = other;
+        std::strong_ordering ordering = std::strncmp(a.chars(), b, a.count) <=> 0;
+        if (ordering == std::strong_ordering::equal) return a.count <=> static_cast<long>(std::strlen(b));
+        return ordering;
+    }
+
+    ///@}
+
+    /** \name Type Compatibility
+      */
+    ///@{
+
+    /** Check if this string is zero-terminated
+      */
+    bool isCString() const
+    {
+        return !me().parent;
+    }
+
+    /** %Return a zero-terminated version of this string
+      */
+    String cString() const
+    {
+        return isCString() ? *this : copy();
+    }
+
+    /** %Return this string as byte array
+      */
+    const Bytes &asBytes() const { return *this; }
+
+    /** Automatic conversion to low-level C-string
+      */
+    operator char *()
+    {
+        assert(isCString());
+        return chars();
+    }
+
+    /** Automatic conversion to low-level C-string
+      */
+    operator const char *() const
+    {
+        assert(isCString());
+        return chars();
+    }
+
+    /** Automatic conversion to low-level data pointer
+      */
+    explicit operator void *()
+    {
+        return me().items;
+    }
+
+    /** Automatic conversion to constant low-level data pointer
+      */
+    explicit operator const void *() const
+    {
+        return me().items;
+    }
+
+    ///@}
+
+private:
+    template<class>
+    friend class StringParser;
+
+    friend class File;
+
+    explicit String(long n, char b, Allocate):
+        Bytes{n + 1, Allocate{}}
+    {
+        assert(n >= 0);
+        --me().count;
+        fill(b);
+        me().items[me().count] = 0;
+    }
+
+    explicit String(long n, Allocate):
+        Bytes{n + 1, Allocate{}}
+    {
+        assert(n >= 0);
+        --me().count;
+        me().items[me().count] = 0;
+    }
+
+    explicit String(Shared<State> &parent, long i0, long i1):
+        Bytes{parent, i0, i1}
+    {}
+
+    explicit String(char *data, long len):
+        Bytes{reinterpret_cast<uint8_t *>(data), len}
+    {}
+
+    explicit String(Use<State> &parent):
+        Bytes{parent}
+    {}
+
+    bool readBool(Out<bool> value) const;
+    bool readInt(Out<int> value) const;
+    bool readLong(Out<long> value) const;
+    bool readDouble(Out<double> value) const;
+
+    void replace(const char *b, const char *s, long bn, long sn);
+
+    String replaced(const char *b, const char *s, long bn, long sn) const
+    {
+        String result = copy();
+        result.replace(b, s, bn, sn);
+        return result;
+    }
+
+    List<String> split(const char *sep, long sepLength) const;
+
+    static long len(const char *s)
+    {
+        return static_cast<long>(std::strlen(s));
+    }
+};
+
+/** Equal to operator
+  */
+inline bool operator==(const String &a, const char *b)
+{
+    return a.count() == static_cast<long>(std::strlen(b)) && std::strncmp(a.chars(), b, a.count()) == 0;
+}
+
+/** Equal to operator
+  */
+inline bool operator==(const char *a, const String &b)
+{
+    return static_cast<long>(std::strlen(a)) == b.count() && std::strncmp(a, b.chars(), b.count()) == 0;
+}
+
+/** %String concatenation operator
+  */
+inline List<String> operator+(const String &a, const String &b)
+{
+    return List<String>{} << a << b;
+}
+
+/** %String concatenation operator
+  */
+inline List<String> operator+(List<String> &a, const String &b)
+{
+    return a << b;
+}
+
+/** %String concatenation operator
+  */
+inline List<String> operator+(const char *a, const String &b)
+{
+    return String{a} + b;
+}
+
+/** %String concatenation operator
+  */
+inline List<String> operator+(const String &a, const char *b)
+{
+    return a + String{b};
+}
+
+/** %String concatenation operator
+  */
+inline List<String> operator+(const String &a, char b)
+{
+    return a + String::allocate(1, b);
+}
+
+/** %String concatenation operator
+  */
+inline List<String> operator+(char a, const String &b)
+{
+    return String::allocate(1, a) + b;
+}
+
+inline String &String::operator+=(char b)
+{
+    String result = String::allocate(count() + 1);
+    std::memcpy(result.chars(), chars(), count());
+    result.chars()[count()] = b;
+    return *this = result;
+}
+
+inline String &String::operator+=(const char *b)
+{
+    const char *a = chars();
+    long an = count();
+    long bn = len(b);
+    String result = String::allocate(an + bn);
+    char *r = result.chars();
+    std::memcpy(r, a, an);
+    std::memcpy(r + an, b, bn);
+    return *this = result;
+}
+
+inline String &String::operator+=(const String &b)
+{
+    const char *ap = chars();
+    const char *bp = b.chars();
+    long an = count();
+    long bn = b.count();
+    String result = String::allocate(an + bn);
+    char *rp = result.chars();
+    std::memcpy(rp, ap, an);
+    std::memcpy(rp + an, bp, bn);
+    return *this = result;
+}
+
+/** Determine the common prefix between \a a and \b b
+  * \ingroup strings
+  */
+template<class T>
+T commonPrefix(const T &a, const T &b)
+{
+    long i = 0, n = (a.count() < b.count()) ? a.count() : b.count();
+    for (; i < n; ++i) {
+        if (a.at(i) != b.at(i)) break;
+    }
+    return a.copy(0, i);
+}
+
+/** Read \a text as a number literal
+  * \param text Input text
+  * \param fallback Fallback value if parsing of the number literal fails
+  * \param check %Return value which is incremented when the text could be completely interpreted as a number literal
+  * \return Parsed value
+  */
+template<class T>
+T readNumber(const String &text, T fallback = T{}, Out<int> check = None{})
+{
+    T value = fallback;
+    check += (scanNumber<T>(text, &value) == text.count() && text.count() > 0);
+    return value;
+}
+
+/** Read \a text as a number literal
+  * \param text Input text
+  * \param check %Return value which is incremented when the text could be completely interpreted as a number literal
+  * \return Parsed value
+  */
+template<class T>
+T readNumber(const String &text, Out<int> check)
+{
+    return readNumber(text, T{}, check);
+}
+
+template<>
+class StringParser<bool> {
+public:
+    static bool read(Out<bool> value, const String &text)
+    {
+        return text.readBool(&value);
+    }
+};
+
+template<class T>
+bool StringParser<T>::read(Out<T> value, const String &text)
+{
+    int ok = 0;
+    value = readNumber<T>(text, &ok);
+    return ok;
+}
+
+} // namespace cc

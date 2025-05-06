@@ -1,0 +1,102 @@
+#pragma once
+
+#include <cc/chars>
+#include <compare>
+#include <cstring>
+
+namespace cc {
+
+/** \class Casefree cc/Casefree
+  * \ingroup strings
+  * \brief Case-insensitive string comparism
+  */
+template<class String>
+class Casefree: public String
+{
+public:
+    /** Create an empty case-insensitive string
+      */
+    Casefree() = default;
+
+    /** Create a case-insensitive string by wrapping \a b
+      */
+    Casefree(const String &b):
+        String{b}
+    {}
+
+    /** Create a case-insensitive string by copying \a b
+      */
+    Casefree(const char *b):
+        String{b}
+    {}
+
+    /** Equality operator
+      */
+    bool operator==(const Casefree &other) const
+    {
+        long n = (*this).count();
+        if (n != other.count()) return false;
+        for (long i = 0; i < n; ++i) {
+            if (toLower((*this)[i]) != toLower(other[i]))
+                return false;
+        }
+        return true;
+    }
+
+    /** Equality operator
+      */
+    bool operator==(const char *other) const
+    {
+        long n = (*this).count();
+        if (n != static_cast<long>(std::strlen(other))) return false;
+        for (long i = 0; i < n; ++i) {
+            if (toLower((*this)[i]) != toLower(other[i]))
+                return false;
+        }
+        return true;
+    }
+
+    /** Ordering operator
+      */
+    std::strong_ordering operator<=>(const Casefree &other) const
+    {
+        long n = (*this).count();
+        long m = other.count();
+        long l = n < m ? m : n;
+        for (long i = 0; i < l; ++i) {
+            auto x = (i < n) ? toLower((*this)[i]) : typename String::Item{0};
+            auto y = (i < m) ? toLower(other[i]) : typename String::Item{0};
+            if (x < y) return std::strong_ordering::less;
+            else if (y < x) return std::strong_ordering::greater;
+        }
+        return n <=> m;
+    }
+
+    /** Ordering operator
+      */
+    std::strong_ordering operator<=>(const String &other) const
+    {
+        return *this <=> Casefree{other};
+    }
+
+    /** Ordering operator
+      */
+    std::strong_ordering operator<=>(const char *other) const
+    {
+        long n = (*this).count();
+        long m = static_cast<long>(std::strlen(other));
+        long l = n < m ? m : n;
+        for (long i = 0; i < l; ++i) {
+            auto x = (i < n) ? toLower((*this)[i]) : '\0';
+            auto y = (i < m) ? toLower(other[i]) : '\0';
+            if (x < y) return std::strong_ordering::less;
+            else if (y < x) return std::strong_ordering::greater;
+        }
+        return n <=> m;
+    }
+};
+
+template<class T>
+Casefree<T> casefree(const T &s) { return s; }
+
+} // namespace cc

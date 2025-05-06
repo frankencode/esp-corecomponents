@@ -1,0 +1,218 @@
+#pragma once
+
+#include <cc/Handle>
+#include <type_traits>
+#include <utility>
+#include <atomic>
+#include <compare>
+#include <cstddef>
+#include <cassert>
+
+namespace cc {
+
+/** \class New cc/Object
+  * \ingroup objects
+  * \brief Helper type to select non-null contruction
+  */
+class New{};
+
+/** \class Object cc/Object
+  * \ingroup objects
+  * \brief %Object with value semantics
+  */
+class Object
+{
+public:
+    /** Create a null object
+      */
+    Object() = default;
+
+    /** Check if this is a non-null object
+      */
+    explicit operator bool() const { return me; }
+
+    /** Check if this is a null object
+      */
+    bool isNull() const { return !me; }
+
+    /** Check if this object is of type \a T
+      */
+    template<class T>
+    bool is() const
+    {
+        return me.is<typename T::State>();
+    }
+
+    /** Cast this object to type \a T
+      */
+    template<class T>
+    T as() const
+    {
+        assert(!isNull());
+        return alias<T>(&me.as<typename T::State>());
+    }
+
+    /** Check if the underlying object reference is weak
+      */
+    bool isWeak() const
+    {
+        return me.isWeak();
+    }
+
+    /** Equality operator
+      */
+    bool operator==(const Object &other) const { return me == other.me; }
+
+    /** Ordering operator
+      */
+    std::strong_ordering operator<=>(const Object &other) const { return me <=> other.me; }
+
+    /** Reference count
+      */
+    long useCount() const { return me ? me().useCount() : 0; }
+
+protected:
+    friend struct PropertyBinding;
+
+    template<class T, bool>
+    friend class ObjectAs;
+
+    /** \brief Reference counted object state
+      */
+    class State
+    {
+    public:
+        /** Default constructor
+          */
+        State() = default;
+
+        /** Copy constructor
+          */
+        State(const State &)
+        {}
+
+        /** Virtual destructor
+          */
+        virtual ~State()
+        {}
+
+        /** Reference count
+          */
+        long useCount() const
+        {
+            return useCount_.load(std::memory_order_acquire);
+        }
+
+        /** \internal
+          */
+        const State &operator=(const State &) const { return *this; }
+
+        /** Check if this state is of type \a T
+          */
+        template<class T>
+        bool is() const
+        {
+            return dynamic_cast<const T *>(this);
+        }
+
+        /** Statically cast this state to a different type T
+          */
+        template<class T>
+        T &as() {
+            assert(is<T>());
+            return static_cast<T &>(*this);
+        }
+
+        /** Statically cast this state to a different type T
+          */
+        template<class T>
+        const T &as() const {
+            assert(is<T>());
+            return static_cast<const T &>(*this);
+        }
+
+    private:
+        template<class>
+        friend class Handle;
+
+        void acquire()
+        {
+            useCount_.fetch_add(1, std::memory_order_release);
+        }
+
+        void release()
+        {
+            if (useCount_.fetch_sub(1, std::memory_order_acq_rel) == 1)
+                delete this;
+        }
+
+        std::atomic<long> useCount_ { 1 };
+    };
+
+    /** Create an alias object for the given \a state
+      * \tparam T %Type of object
+      */
+    template<class T>
+    static T alias(const State *state)
+    {
+        T target;
+        if (state) target.Object::me = Handle<State>{state, Alias{}};
+        return target;
+    }
+
+    template<class T>
+    T weak() const
+    {
+        return weak<T>(&Object::me());
+    }
+
+    template<class T>
+    static T weak(const State *state)
+    {
+        T target;
+        if (state) target.Object::me = Handle<State>{state, Weak{}};
+        return target;
+    }
+
+    /** Create the object state when called the first time
+      * \tparam T %Type of object state
+      */
+    template<class T>
+    inline void initOnce() {
+        static Handle<State> me{new T};
+        Object::me = me;
+    }
+
+    /** Create a distinct object state for each thread when called the first time in that thread
+      * \tparam T %Type of object state
+      */
+    template<class T>
+    inline void initOncePerThread() {
+        thread_local Handle<State> me{new T};
+        Object::me = me;
+    }
+
+    /** Initialize object with \a newState
+      */
+    explicit Object(State *newState):
+        me{newState}
+    {}
+
+    explicit Object(State *state, Alias):
+        me{state, Alias{}}
+    {}
+
+    explicit Object(State *state, Weak):
+        me{state, Weak{}}
+    {}
+
+    Object &operator=(std::nullptr_t)
+    {
+        me = nullptr;
+        return *this;
+    }
+
+    mutable Handle<State> me; ///< %Internal object state
+};
+
+} // namespace cc

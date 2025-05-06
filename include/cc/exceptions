@@ -1,0 +1,183 @@
+#pragma once
+
+#include <cc/Exception>
+
+namespace cc {
+
+/** \class IoExhaustion cc/exceptions
+  * \ingroup exceptions
+  * \brief Input or Output exhaustion
+  */
+class IoExhaustion: public Exception
+{};
+
+/** \class OutputExhaustion cc/exceptions
+  * \ingroup exceptions
+  * \brief Output exhaustion
+  */
+class OutputExhaustion: public IoExhaustion
+{
+public:
+    String message() const override;
+};
+
+/** \class InputExhaustion cc/exceptions
+  * \ingroup exceptions
+  * \brief Input exhaustion
+  */
+class InputExhaustion: public IoExhaustion
+{
+public:
+    String message() const override;
+};
+
+/** \class Timeout cc/exceptions
+  * \ingroup exceptions
+  * \brief Operation timed out
+  */
+class Timeout: public Exception
+{
+public:
+    String message() const override;
+};
+
+/** \class UsageError cc/exceptions
+  * \ingroup exceptions
+  * \brief %User input ambiguous, report back to user and provide guidance
+  */
+class UsageError: public Exception
+{
+public:
+    explicit UsageError(const String &message = ""): message_{message} {}
+
+    String message() const override { return message_; }
+
+private:
+    String message_;
+};
+
+/** \class HelpRequest cc/exceptions
+  * \ingroup exceptions
+  * \brief %User requested help
+  */
+class HelpRequest: public Exception
+{
+public:
+    String message() const override;
+};
+
+/** \class VersionRequest cc/exceptions
+  * \ingroup exceptions
+  * \brief %User requested the application version
+  */
+class VersionRequest: public Exception
+{
+public:
+    String message() const override;
+};
+
+/** \class EncodingError cc/exceptions
+  * \ingroup exceptions
+  * \brief Some encoded data is malformed
+  */
+class EncodingError: public Exception
+{};
+
+/** \class UnicodeError cc/exceptions
+  * \ingroup exceptions
+  * \brief Encoding/decoding of an %Unicode string failed
+  */
+class UnicodeError: public EncodingError
+{};
+
+/** \class PropertyBindingError cc/exceptions
+  * \ingroup exceptions
+  * \brief General error binding properties
+  */
+class PropertyBindingError: public Exception
+{};
+
+/** \class PropertyBindingLoop cc/exceptions
+  * \ingroup exceptions
+  * \brief %Property binding loop detected
+  */
+class PropertyBindingLoop: public PropertyBindingError
+{
+public:
+    String message() const override;
+};
+
+/** \class CommandNotFound cc/exceptions
+  * \ingroup exceptions
+  * \brief %Command not found
+  */
+class CommandNotFound: public UsageError
+{
+public:
+    CommandNotFound(const String &command = ""):
+        command_{command}
+    {}
+
+    /** The command in question
+      */
+    String command() const { return command_; }
+
+    String message() const override;
+
+private:
+    String command_;
+};
+
+/** \class DebugError cc/exceptions
+  * \ingroup exceptions
+  * \brief Debugging hint on internal system malfunction
+  * \see SystemError
+  */
+class DebugError: public Exception
+{
+public:
+    DebugError(const String &reason, const char *source, int line):
+        reason_{reason},
+        source_{source},
+        line_{line}
+    {}
+
+    String message() const override;
+
+private:
+    String reason_;
+    const char *source_;
+    int line_;
+};
+
+#define CC_DEBUG_ERROR(reason) \
+    throw DebugError(reason, __FILE__, __LINE__)
+
+#define CC_ASSERT(condition) \
+    if (!(condition)) CC_DEBUG_ERROR(#condition);
+
+/** \class Error cc/exceptions
+  * \ingroup exceptions
+  * \brief Generic application error
+  */
+class Error: public Exception
+{
+public:
+    Error(int exitCode):
+        exitCode_{exitCode}
+    {}
+
+    Error(const String &message, int exitCode = 1):
+        message_{message},
+        exitCode_{exitCode}
+    {}
+
+    String message() const override { return message_; }
+    int exitCode() const { return exitCode_; }
+
+private:
+    String message_;
+    int exitCode_;
+};
+
+} // namespace cc
